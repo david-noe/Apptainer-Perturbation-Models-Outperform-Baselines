@@ -10,6 +10,7 @@ __pycache__
 data/scGPT_CP/
 data/scGPT_human/
 data/save
+tmp
 analyses/calibration/baseline_outputs/
 *.pt
 outputs

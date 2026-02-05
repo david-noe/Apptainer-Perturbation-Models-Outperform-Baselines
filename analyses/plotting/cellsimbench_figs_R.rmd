@@ -180,6 +180,9 @@ ggsave("figures/fS1e_S6a.png", width = 6, height = 8, dpi = 300)
 ```{r fig.width=5, fig.height=3}
 metrics <- read.csv("per_perturbation_results.csv")
 
+# Classify metrics as "Main" or "DEG" based on whether they contain "_degs" suffix
+metrics$metric_type <- ifelse(grepl("_degs$", metrics$metric), "DEG", "Main")
+
 # Pre-calculate Wilcoxon test for drf_interpolated
 paired_data_interp <- metrics %>%
   filter(metric %in% c("mse", "wmse")) %>%
@@ -292,78 +295,26 @@ f1e_summary_plot
 
 
 # Supplementary Figure 8: DRF Heatmap Across Datasets and Metrics (Technical Duplicate Baseline)
-```{r fig.width=7, fig.height=5}
-# Calculate mean DRF per dataset and metric
-heatmap_long <- metrics %>%
-  group_by(dataset, metric) %>%
-  summarise(mean_drf = mean(drf, na.rm = TRUE), .groups = "drop")
-
-# Order metrics and datasets by overall mean DRF
-metric_order <- heatmap_long %>%
-  group_by(metric) %>%
-  summarise(overall_mean = mean(mean_drf, na.rm = TRUE)) %>%
-  arrange(overall_mean) %>%
-  pull(metric)
-
-dataset_order <- heatmap_long %>%
-  group_by(dataset) %>%
-  summarise(overall_mean = mean(mean_drf, na.rm = TRUE)) %>%
-  arrange(overall_mean) %>%
-  pull(dataset)
-
-heatmap_long$metric <- factor(heatmap_long$metric, levels = metric_order)
-heatmap_long$dataset <- factor(heatmap_long$dataset, levels = dataset_order)
-
-# Barplot: mean DRF per metric (across datasets)
-bar_data <- heatmap_long %>%
-  group_by(metric) %>%
-  summarise(mean_drf = mean(mean_drf, na.rm = TRUE))
-
-bar_data$metric <- factor(bar_data$metric, levels = metric_order)
-
-barplot_top <- ggplot(bar_data, aes(x = metric, y = mean_drf, fill = mean_drf)) +
-  geom_col(width = 0.7, show.legend = FALSE) +
-  geom_text(
-    aes(label = sprintf("%.2f", mean_drf)),
-    size = 3,
-    vjust = ifelse(bar_data$mean_drf > 0.6, 1.2, -0.5)
-  ) +
-  scale_fill_gradient2(
-    low = "darkred", mid = "white", high = "steelblue", midpoint = 0,
-    name = "mean DRF"
-  ) +
-  theme_classic() +
-  ylab("mean DRF") + xlab(NULL) +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        plot.margin = margin(5, 5, 0, 5)) +
-  ggtitle("mean DRF Heatmap by Dataset and Metric")
-
-# Barplot: mean deg_count per dataset (horizontal, to go on right of heatmap)
-deg_data <- metrics %>%
-  group_by(dataset) %>%
-  summarise(mean_deg = mean(deg_count, na.rm = TRUE), .groups = "drop")
-
-deg_data$dataset <- factor(deg_data$dataset, levels = dataset_order)
-
-barplot_deg <- ggplot(deg_data, aes(x = mean_deg, y = dataset, fill = mean_deg)) +
-  geom_col(width = 0.7) +
-  geom_text(aes(label = round(mean_deg), hjust = ifelse(mean_deg > 90, 1.2, -0.2)), 
-            size = 2.5) +
-  scale_fill_gradient(low = "grey80", high = "grey80", name = "mean nDEG") +
-  theme_classic() +
-  xlab("mean nDEG") + ylab(NULL) +
-  theme(axis.text.y = element_blank(),
-        axis.ticks.y = element_blank(),
-        plot.margin = margin(0, 5, 0, 0),
-        legend.position = "none")
-
+## Define metric labels (used by all heatmaps)
+```{r}
 metric_labels <- c(
   "pearson_deltapert" = "Pearson \u0394 Pert",
   "pearson_deltapert_degs" = "Pearson \u0394 Pert DEGs",
   "pearson_delta"          = "Pearson \u0394 Pert",
   "nir"                    = "NIR",
+  "pds"                    = "PDS",
   "mse"                    = "MSE",
+  "mse_deltactrl"          = "MSE \u0394 Ctrl",
+  "mse_degs"               = "MSE DEGs",
+  "mse_deltactrl_degs"     = "MSE \u0394 Ctrl DEGs",
+  "wmse"                   = "WMSE",
+  "wmse_deltactrl"         = "WMSE \u0394 Ctrl",
+  "mae"                    = "MAE",
+  "mae_deltactrl"          = "MAE \u0394 Ctrl",
+  "mae_degs"               = "MAE DEGs",
+  "mae_deltactrl_degs"     = "MAE \u0394 Ctrl DEGs",
+  "wmae"                   = "Weighted MAE",
+  "wmae_deltactrl"         = "Weighted MAE \u0394 Ctrl",
   "pearson_deltactrl"      = "Pearson \u0394 Ctrl",
   "pearson_deltactrl_degs" = "Pearson \u0394 Ctrl DEGs",
   "r2_deltactrl"           = expression(R^2~"\u0394"~Ctrl),
@@ -371,119 +322,183 @@ metric_labels <- c(
   "r2_deltapert"           = expression(R^2~"\u0394"~Pert),
   "r2_deltapert_degs"      = expression(R^2~"\u0394"~Pert~DEGs),
   "weighted_r2_deltactrl"  = expression(Weighted~R^2~"\u0394"~Ctrl),
-  "weighted_r2_deltapert"  = expression(Weighted~R^2~"\u0394"~Pert),
-  "wmse"                   = "WMSE"
+  "weighted_r2_deltapert"  = expression(Weighted~R^2~"\u0394"~Pert)
 )
+```
 
-heatmap_plot <- ggplot(heatmap_long, aes(x = metric, y = dataset, fill = mean_drf)) +
-  geom_tile() +
-  geom_text(aes(label = sprintf("%.2f", mean_drf)), size = 3) +
-  scale_fill_gradient2(
-    name = "mean DRF",
-    low = "darkred", mid = "white", high = "steelblue", midpoint = 0,
-    guide = guide_colorbar(title.position = "top", title.hjust = 0.5)
-  ) +
-  theme_classic() +
-  xlab("Metric") + ylab("Dataset") +
-  scale_x_discrete(labels = metric_labels) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        plot.margin = margin(0, 5, 0, 5),
-        legend.position = "bottom")
+## Helper function for generating DRF heatmaps
+```{r}
+# Reusable function to create DRF heatmap
+create_drf_heatmap <- function(data, drf_col, metric_type_filter, title_suffix, metric_labels) {
+  # Filter by metric type
+  filtered_data <- data %>%
+    filter(metric_type == metric_type_filter)
+  
+  # Calculate mean DRF per dataset and metric
+  heatmap_long <- filtered_data %>%
+    group_by(dataset, metric) %>%
+    summarise(mean_drf = mean(.data[[drf_col]], na.rm = TRUE), .groups = "drop")
+  
+  # Order metrics and datasets by overall mean DRF
+  metric_order <- heatmap_long %>%
+    group_by(metric) %>%
+    summarise(overall_mean = mean(mean_drf, na.rm = TRUE)) %>%
+    arrange(overall_mean) %>%
+    pull(metric)
+  
+  dataset_order <- heatmap_long %>%
+    group_by(dataset) %>%
+    summarise(overall_mean = mean(mean_drf, na.rm = TRUE)) %>%
+    arrange(overall_mean) %>%
+    pull(dataset)
+  
+  heatmap_long$metric <- factor(heatmap_long$metric, levels = metric_order)
+  heatmap_long$dataset <- factor(heatmap_long$dataset, levels = dataset_order)
+  
+  # Barplot: mean DRF per metric (across datasets)
+  bar_data <- heatmap_long %>%
+    group_by(metric) %>%
+    summarise(mean_drf = mean(mean_drf, na.rm = TRUE))
+  
+  bar_data$metric <- factor(bar_data$metric, levels = metric_order)
+  
+  barplot_top <- ggplot(bar_data, aes(x = metric, y = mean_drf, fill = mean_drf)) +
+    geom_col(width = 0.7, show.legend = FALSE) +
+    geom_text(
+      aes(label = sprintf("%.2f", mean_drf)),
+      size = 2.5,
+      vjust = ifelse(bar_data$mean_drf > 0.25, 1.2, -0.5)
+    ) +
+    scale_fill_gradient2(
+      low = "darkred", mid = "white", high = "steelblue", midpoint = 0,
+      name = "mean DRF"
+    ) +
+    theme_classic() +
+    ylab("mean DRF") + xlab(NULL) +
+    theme(axis.text.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          plot.margin = margin(5, 5, 0, 5)) +
+    ggtitle(paste0("Mean DRF Heatmap - ", title_suffix))
+  
+  # Barplot: mean deg_count per dataset (horizontal, to go on right of heatmap)
+  deg_data <- filtered_data %>%
+    group_by(dataset) %>%
+    summarise(mean_deg = mean(deg_count, na.rm = TRUE), .groups = "drop")
+  
+  deg_data$dataset <- factor(deg_data$dataset, levels = dataset_order)
+  
+  barplot_deg <- ggplot(deg_data, aes(x = mean_deg, y = dataset, fill = mean_deg)) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = round(mean_deg), hjust = ifelse(mean_deg > 90, 1.2, -0.2)), 
+              size = 2.5) +
+    scale_fill_gradient(low = "grey80", high = "grey80", name = "mean nDEG") +
+    theme_classic() +
+    xlab("mean\nnDEG") + ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          plot.margin = margin(0, 5, 0, 0),
+          legend.position = "none")
+  
+  heatmap_plot <- ggplot(heatmap_long, aes(x = metric, y = dataset, fill = mean_drf)) +
+    geom_tile() +
+    geom_text(aes(label = sprintf("%.2f", mean_drf)), size = 3) +
+    scale_fill_gradient2(
+      name = "mean DRF",
+      low = "darkred", mid = "white", high = "steelblue", midpoint = 0,
+      guide = guide_colorbar(title.position = "top", title.hjust = 0.5)
+    ) +
+    theme_classic() +
+    xlab("Metric") + ylab("Dataset") +
+    scale_x_discrete(labels = metric_labels) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.margin = margin(0, 5, 0, 5),
+          legend.position = "bottom")
+  
+  combined_plot <- barplot_top + plot_spacer() + heatmap_plot + barplot_deg + 
+    plot_layout(heights = c(0.3, 1), widths = c(8, 1))
+  
+  return(combined_plot)
+}
+```
 
-combined_plot <- barplot_top + plot_spacer() + heatmap_plot + barplot_deg + 
-  plot_layout(heights = c(0.3, 1), widths = c(8, 1))
+## DRF Heatmap - Technical Duplicate Baseline, Main Metrics
+```{r fig.width=7, fig.height=5}
+heatmap_techdup_main <- create_drf_heatmap(
+  data = metrics,
+  drf_col = "drf",
+  metric_type_filter = "Main",
+  title_suffix = "Technical Duplicate Baseline, Main Metrics",
+  metric_labels = metric_labels
+)
+heatmap_techdup_main
+ggsave("figures/fS8_main.png", heatmap_techdup_main, width = 7, height = 5, dpi = 300)
+```
 
-combined_plot
-ggsave("figures/fS8.png", combined_plot, width = 7, height = 5, dpi = 300)
+## DRF Heatmap - Technical Duplicate Baseline, DEG Metrics
+```{r fig.width=7, fig.height=5}
+heatmap_techdup_degs <- create_drf_heatmap(
+  data = metrics,
+  drf_col = "drf",
+  metric_type_filter = "DEG",
+  title_suffix = "Technical Duplicate Baseline, DEG Metrics",
+  metric_labels = metric_labels
+)
+heatmap_techdup_degs
+ggsave("figures/fS8_degs.png", heatmap_techdup_degs, width = 7, height = 5, dpi = 300)
 ```
 
 # Figure 2E: DRF Heatmap Across Datasets and Metrics (Interpolated Baseline) 
+
+## DRF Heatmap - Interpolated Baseline, Main Metrics
 ```{r fig.width=7, fig.height=5}
-# Calculate mean DRF per dataset and metric
-heatmap_long <- metrics %>%
-  group_by(dataset, metric) %>%
-  summarise(mean_drf = mean(drf_interpolated, na.rm = TRUE), .groups = "drop")
+heatmap_interp_main <- create_drf_heatmap(
+  data = metrics,
+  drf_col = "drf_interpolated",
+  metric_type_filter = "Main",
+  title_suffix = "Interpolated Baseline, Main Metrics",
+  metric_labels = metric_labels
+)
+heatmap_interp_main
+ggsave("figures/f2e_main.png", heatmap_interp_main, width = 7, height = 5, dpi = 300)
+```
 
-# Order metrics and datasets by overall mean DRF
-metric_order <- heatmap_long %>%
-  group_by(metric) %>%
-  summarise(overall_mean = mean(mean_drf, na.rm = TRUE)) %>%
-  arrange(overall_mean) %>%
-  pull(metric)
+## DRF Heatmap - Interpolated Baseline, DEG Metrics
+```{r fig.width=7, fig.height=5}
+heatmap_interp_degs <- create_drf_heatmap(
+  data = metrics,
+  drf_col = "drf_interpolated",
+  metric_type_filter = "DEG",
+  title_suffix = "Interpolated Baseline, DEG Metrics",
+  metric_labels = metric_labels
+)
+heatmap_interp_degs
+ggsave("figures/f2e_degs.png", heatmap_interp_degs, width = 7, height = 5, dpi = 300)
+```
 
-dataset_order <- heatmap_long %>%
-  group_by(dataset) %>%
-  summarise(overall_mean = mean(mean_drf, na.rm = TRUE)) %>%
-  arrange(overall_mean) %>%
-  pull(dataset)
+## DRF Heatmap - Control Baseline, Main Metrics
+```{r fig.width=7, fig.height=5}
+heatmap_ctrl_main <- create_drf_heatmap(
+  data = metrics,
+  drf_col = "drf_ctrl",
+  metric_type_filter = "Main",
+  title_suffix = "Control Baseline, Main Metrics",
+  metric_labels = metric_labels
+)
+heatmap_ctrl_main
+ggsave("figures/fS_ctrl_main.png", heatmap_ctrl_main, width = 7, height = 5, dpi = 300)
+```
 
-heatmap_long$metric <- factor(heatmap_long$metric, levels = metric_order)
-heatmap_long$dataset <- factor(heatmap_long$dataset, levels = dataset_order)
-
-# Barplot: mean DRF per metric (across datasets)
-bar_data <- heatmap_long %>%
-  group_by(metric) %>%
-  summarise(mean_drf = mean(mean_drf, na.rm = TRUE))
-
-bar_data$metric <- factor(bar_data$metric, levels = metric_order)
-
-barplot_top <- ggplot(bar_data, aes(x = metric, y = mean_drf, fill = mean_drf)) +
-  geom_col(width = 0.7, show.legend = FALSE) +
-  geom_text(
-    aes(label = sprintf("%.2f", mean_drf)),
-    size = 2.5,
-    vjust = ifelse(bar_data$mean_drf > 0.25, 1.2, -0.5)
-  ) +
-  scale_fill_gradient2(
-    low = "darkred", mid = "white", high = "steelblue", midpoint = 0,
-    name = "mean DRF"
-  ) +
-  theme_classic() +
-  ylab("mean DRF") + xlab(NULL) +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        plot.margin = margin(5, 5, 0, 5)) +
-  ggtitle("Mean DRF Heatmap by Dataset and Metric")
-
-# Barplot: mean deg_count per dataset (horizontal, to go on right of heatmap)
-deg_data <- metrics %>%
-  group_by(dataset) %>%
-  summarise(mean_deg = mean(deg_count, na.rm = TRUE), .groups = "drop")
-
-deg_data$dataset <- factor(deg_data$dataset, levels = dataset_order)
-
-barplot_deg <- ggplot(deg_data, aes(x = mean_deg, y = dataset, fill = mean_deg)) +
-  geom_col(width = 0.7) +
-  geom_text(aes(label = round(mean_deg), hjust = ifelse(mean_deg > 90, 1.2, -0.2)), 
-            size = 2.5) +
-  scale_fill_gradient(low = "grey80", high = "grey80", name = "mean nDEG") +
-  theme_classic() +
-  xlab("mean\nnDEG") + ylab(NULL) +
-  theme(axis.text.y = element_blank(),
-        axis.ticks.y = element_blank(),
-        plot.margin = margin(0, 5, 0, 0),
-        legend.position = "none")
-
-heatmap_plot <- ggplot(heatmap_long, aes(x = metric, y = dataset, fill = mean_drf)) +
-  geom_tile() +
-  geom_text(aes(label = sprintf("%.2f", mean_drf)), size = 3) +
-  scale_fill_gradient2(
-    name = "mean DRF",
-    low = "darkred", mid = "white", high = "steelblue", midpoint = 0,
-    guide = guide_colorbar(title.position = "top", title.hjust = 0.5)
-  ) +
-  theme_classic() +
-  xlab("Metric") + ylab("Dataset") +
-  scale_x_discrete(labels = metric_labels) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        plot.margin = margin(0, 5, 0, 5),
-        legend.position = "bottom")
-
-combined_plot <- barplot_top + plot_spacer() + heatmap_plot + barplot_deg + 
-  plot_layout(heights = c(0.3, 1), widths = c(8, 1))
-
-combined_plot
-ggsave("figures/f2e.png", combined_plot, width = 7, height = 5, dpi = 300)
+## DRF Heatmap - Control Baseline, DEG Metrics
+```{r fig.width=7, fig.height=5}
+heatmap_ctrl_degs <- create_drf_heatmap(
+  data = metrics,
+  drf_col = "drf_ctrl",
+  metric_type_filter = "DEG",
+  title_suffix = "Control Baseline, DEG Metrics",
+  metric_labels = metric_labels
+)
+heatmap_ctrl_degs
+ggsave("figures/fS_ctrl_degs.png", heatmap_ctrl_degs, width = 7, height = 5, dpi = 300)
 ```
 
 # Supplementary Figure: DRF Comparison Between Replogle K562 Datasets (GWPS vs Essential)
@@ -530,7 +545,7 @@ genes_to_test <- c("AR", "ATF2", "ATF3", "BCLAF1", "BHLHE40", "BRCA1", "CBX3",
                    "TRIM28", "UBTF", "USF1", "USF2", "VDR", "YY1", "ZBTB33",
                    "ZBTB7A", "ZC3H11A", "ZEB1", "ZKSCAN1", "ZNF384")
 
-if (!file.exists("gsea_input_for_R/fgsea_all_results.csv")) {
+if (!file.exists("gsea_input_for_R/fgsea_all_results.csv") | !file.exists("gsea_input_for_R/all_fgsea_results.rds")) {
 
   # Load ChEA gene sets
   chea_lines <- readLines("ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X.txt")

@@ -85,7 +85,7 @@ for dataset in norman19 wessels23; do
 done
 ```
 
-**Available models:** `fmlp_esm2`, `fmlp_geneformer`, `fmlp_scgpt`, `fmlp_genept`, `gears`, `sclambda`, `scgpt`, `presage`
+**Available models:** `fmlp_esm2`, `fmlp_geneformer`, `fmlp_scgpt`, `fmlp_genept`, `gears`, `sclambda`, `scgpt`, `presage`, `cellflow`
 
 **Available datasets:** `adamson16`, `frangieh21`, `kaden25fibroblast`, `kaden25rpe1`, `nadig25hepg2`, `nadig25jurkat`, `norman19`, `replogle22k562`, `replogle22k562gwps`, `replogle22rpe1`, `sunshine23`, `tian21crispra`, `tian21crispri`, `wessels23`
 
@@ -222,7 +222,7 @@ python data/add_interpolated_baseline.py --all --workers 4
 
 ### Generating Gene Embeddings (Optional)
 
-Required only if you plan to run the fMLP models (fmlp_esm2, fmlp_geneformer, fmlp_genept):
+Required only if you plan to run the fMLP models (fmlp_esm2, fmlp_geneformer, fmlp_genept) or CellFlow (cellflow):
 
 ```bash
 # Create the required conda environments
@@ -263,6 +263,7 @@ bash docker/gears/build.sh
 bash docker/sclambda/build.sh
 bash docker/scgpt/build.sh
 bash docker/presage/build.sh
+bash docker/cellflow/build.sh
 
 # Or build individually as needed
 bash docker/<model_name>/build.sh

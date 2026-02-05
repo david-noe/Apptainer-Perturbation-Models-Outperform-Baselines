@@ -13,6 +13,7 @@ MODELS=(
     "scgpt"
     "gears"
     "fmlp"
+    "cellflow"
 )
 
 echo "Pulling cellsimbench model images from DockerHub (${DOCKERHUB_USER})..."

@@ -1,0 +1,58 @@
+# @package model
+name: cellflow
+type: docker
+description: "CellFlow optimal transport flow matching model"
+
+docker:
+  image: "cellsimbench/cellflow:latest"
+  memory: "max"
+  cpus: "max"
+  gpu: true
+  shm_size: "16g"
+
+# Model hyperparameters
+hyperparameters:
+  # Foundation model embeddings
+  embedding_key: "embeddings_esm2_mean"
+
+  # PCA
+  n_pca_components: 50
+
+  # Control cell subsampling
+  n_control_cells_train: 2048
+  n_control_cells_val: 256
+  n_control_cells_test: 512
+
+  # Perturbation encoder
+  condition_embedding_dim: 1024
+  cond_output_dropout: 0.9
+  layers_before_pool_dims: [1024, 1024]
+  layers_before_pool_dropout: 0.5
+  layers_after_pool_dims: [1024, 1024]
+  layers_after_pool_dropout: 0.2
+  pooling: "attention_token"
+  max_combination_length: 2
+
+  # Time encoder
+  time_freqs: 1024
+  time_encoder_dims: [2048, 2048, 2048]
+
+  # Flow network
+  hidden_dims: [4096, 4096, 4096]
+  decoder_dims: [4096, 4096, 4096]
+  decoder_dropout: 0.2
+
+  # OT matching
+  epsilon: 0.1
+  tau_a: 1.0
+  tau_b: 1.0
+
+  # Training
+  num_iterations: 200000
+  valid_freq: 200000
+  batch_size: 1024
+  learning_rate: 5e-5
+  multi_steps: 20
+
+  # Random seed
+  seed: 42

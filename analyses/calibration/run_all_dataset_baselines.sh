@@ -42,7 +42,7 @@ run_dataset() {
     uv run cellsimbench benchmark \
         dataset=${dataset} \
         model=baselines \
-        +run_centroid_analysis=true \
+        +run_nir_analysis=true \
         hydra.run.dir="${OUTPUT_BASE_DIR}/${dataset}/${timestamp}" \
         > "${log_file}" 2>&1
     
@@ -63,7 +63,7 @@ echo "Datasets: ${#DATASETS[@]}"
 echo "Max parallel jobs: ${MAX_PARALLEL_JOBS}"
 echo "Output directory: ${OUTPUT_BASE_DIR}"
 echo "Log directory: ${LOG_DIR}"
-echo "Centroid analysis: ENABLED"
+echo "NIR analysis: ENABLED"
 echo "========================================="
 echo ""
 
@@ -168,7 +168,7 @@ for dataset in "${DATASETS[@]}"; do
             
             # Move contents from latest timestamp dir to target
             echo "  ${dataset}: Moving $source_dir/$latest_timestamp/* -> $target_dir/"
-            mv "$source_dir/$latest_timestamp"/* "$target_dir/"
+            rsync -a --remove-source-files "$source_dir/$latest_timestamp"/ "$target_dir/"
             
             # Remove the now-empty timestamp directory and parent if empty
             rmdir "$source_dir/$latest_timestamp" 2>/dev/null

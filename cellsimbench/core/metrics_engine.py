@@ -15,7 +15,7 @@ import warnings
 from tqdm import tqdm
 
 # Import metrics functions from data_manager
-from .data_manager import mse, wmse, pearson, r2_score_on_deltas, DataManager
+from .data_manager import mse, wmse, pearson, r2_score_on_deltas, DataManager, mae, wmae
 
 
 class MetricsEngine:
@@ -37,6 +37,7 @@ class MetricsEngine:
         ground_truth: pd.DataFrame,
         ground_truth_deltas: Dict[str, pd.DataFrame],
         cached_nir_scores: Optional[Dict[str, float]] = None,
+        cached_pds_scores: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Dict[str, float]]:
 
         # Ensure predictions and ground truth have the same var_names
@@ -55,14 +56,20 @@ class MetricsEngine:
         if cached_nir_scores is not None:
             # Use cached scores
             nir_scores = cached_nir_scores
+            pds_scores = cached_pds_scores
         elif self.run_nir:
             # Calculate fresh scores
             nir_scores = self._calculate_nir_scores(
                 predictions, ground_truth
             )
+            # PDS is NIR using Manhattan distance
+            pds_scores = self._calculate_nir_scores(
+                predictions, ground_truth, metric = "cityblock"
+            )
         else:
             # Skip nir analysis, provide default scores
             nir_scores = {key: 0.0 for key in predictions.index}
+            pds_scores = {key: 0.0 for key in predictions.index}
 
         # Get all covariate-condition pairs from DataFrame index
         cov_condition_pairs = [(key.split('_')[0], '_'.join(key.split('_')[1:])) 
@@ -90,10 +97,14 @@ class MetricsEngine:
 
             # Get DEG weights and mask using covariate and perturbation
             weights = self.data_manager.get_deg_weights(covariate_value, condition, gene_order=common_var_names)
-            deg_mask = self.data_manager.get_deg_mask(covariate_value, condition, gene_order=common_var_names)
+            deg_mask = self.data_manager.get_deg_mask(covariate_value, condition, gene_order=common_var_names, topn=100)
             condition_metrics[cov_pert_key] = {
                 'mse': self._calculate_mse(pred_expression, truth_expression),
+                'mse_degs': self._calculate_mse(pred_expression[deg_mask], truth_expression[deg_mask]),
+                'mae': self._calculate_mae(pred_expression, truth_expression),
+                'mae_degs': self._calculate_mae(pred_expression[deg_mask], truth_expression[deg_mask]),
                 'wmse': self._calculate_wmse(pred_expression, truth_expression, weights),
+                'wmae': self._calculate_wmae(pred_expression, truth_expression, weights),
                 
                 # Delta metrics with control baseline - use pre-supplied deltas
                 'pearson_deltactrl': self._calculate_pearson_delta_direct(pred_deltas_ctrl, truth_deltas_ctrl),
@@ -120,24 +131,20 @@ class MetricsEngine:
                 'weighted_r2_deltapert': self._calculate_weighted_r2_delta_direct(
                     pred_deltas_mean, truth_deltas_mean, weights
                 ),
-                
                 # nir metrics
                 'nir': nir_scores[cov_pert_key] if cov_pert_key in nir_scores else np.nan,
-                # 'nir_deltactrl': nir_deltactrl_scores[cov_pert_key],
-                # 'nir_deltamean': nir_deltamean_scores[cov_pert_key],
+                'pds': pds_scores[cov_pert_key] if cov_pert_key in pds_scores else np.nan,
+
             }
 
             
         # Reorganize to metric -> cov_pert_key -> score format
         organized_metrics = {}
-        for metric in ['mse', 'wmse', 'pearson_deltactrl', 'pearson_deltactrl_degs',
-                      'r2_deltactrl', 'r2_deltactrl_degs', 'weighted_r2_deltactrl',
-                      'pearson_deltapert', 'pearson_deltapert_degs', 'r2_deltapert',
-                      'r2_deltapert_degs', 'weighted_r2_deltapert',
-                      'nir']:
+        all_metrics = condition_metrics[cov_pert_key].keys()
+        for metric in all_metrics:
             organized_metrics[metric] = {
                 cov_pert_key: condition_metrics[cov_pert_key][metric] 
-                for cov_pert_key in condition_metrics.keys()
+                for cov_pert_key in condition_metrics.keys() if metric in condition_metrics[cov_pert_key].keys()
             }
         
         return organized_metrics
@@ -153,6 +160,31 @@ class MetricsEngine:
             Mean squared error.
         """
         return mse(pred, truth)
+
+    def _calculate_mae(self, pred: np.ndarray, truth: np.ndarray) -> float:
+        """Calculate MAE following plotting.py logic.
+        
+        Args:
+            pred: Predicted expression values.
+            truth: Ground truth expression values.
+            
+        Returns:
+            Mean absolute error.
+        """
+        return mae(pred, truth)
+    
+    def _calculate_wmae(self, pred: np.ndarray, truth: np.ndarray, weights: np.ndarray) -> float:
+        """Calculate weighted MAE following plotting.py logic.
+        
+        Args:
+            pred: Predicted expression values.
+            truth: Ground truth expression values.
+            weights: DEG-based weights for each gene.
+            
+        Returns:
+            Weighted mean absolute error.
+        """
+        return wmae(pred, truth, weights)
     
     def _calculate_wmse(self, pred: np.ndarray, truth: np.ndarray, weights: np.ndarray) -> float:
         """Calculate weighted MSE following plotting.py logic.
@@ -208,55 +240,6 @@ class MetricsEngine:
         except:
             return np.nan
     
-    def _calculate_r2_delta(self, pred: np.ndarray, truth: np.ndarray,
-                          control: np.ndarray) -> float:
-        """Calculate R² on deltas.
-        
-        Args:
-            pred: Predicted expression values.
-            truth: Ground truth expression values.
-            control: Control/baseline expression values.
-            
-        Returns:
-            R² score on delta values.
-        """
-        delta_pred = pred - control
-        delta_truth = truth - control
-        return r2_score_on_deltas(delta_truth, delta_pred)
-    
-    def _calculate_r2_delta_degs(self, pred: np.ndarray, truth: np.ndarray,
-                               control: np.ndarray, deg_mask: np.ndarray) -> float:
-        """Calculate R² on deltas for DEGs only.
-        
-        Args:
-            pred: Predicted expression values.
-            truth: Ground truth expression values.
-            control: Control/baseline expression values.
-            deg_mask: Boolean mask indicating DEG positions.
-            
-        Returns:
-            R² score on delta values for DEGs only.
-        """
-        delta_pred = pred[deg_mask] - control[deg_mask]
-        delta_truth = truth[deg_mask] - control[deg_mask]
-        return r2_score_on_deltas(delta_truth, delta_pred)
-    
-    def _calculate_weighted_r2_delta(self, pred: np.ndarray, truth: np.ndarray,
-                                   control: np.ndarray, weights: np.ndarray) -> float:
-        """Calculate weighted R² on deltas.
-        
-        Args:
-            pred: Predicted expression values.
-            truth: Ground truth expression values.
-            control: Control/baseline expression values.
-            weights: DEG-based weights for each gene.
-            
-        Returns:
-            Weighted R² score on delta values.
-        """
-        delta_pred = pred - control
-        delta_truth = truth - control
-        return r2_score_on_deltas(delta_truth, delta_pred, weights)
     
     def _calculate_pearson_delta_direct(self, pred_deltas: np.ndarray, truth_deltas: np.ndarray) -> float:
         """Calculate Pearson correlation on pre-computed deltas.
@@ -300,7 +283,8 @@ class MetricsEngine:
     def _calculate_nir_scores(
         self, 
         predictions: pd.DataFrame,
-        ground_truth: pd.DataFrame
+        ground_truth: pd.DataFrame,
+        metric='euclidean'
     ) -> Dict[str, float]:
         """Calculate nir for all perturbations within their covariate groups.
         
@@ -311,6 +295,7 @@ class MetricsEngine:
         Args:
             predictions: DataFrame with predicted expression profiles (cov_pert_key as index)
             ground_truth: DataFrame with ground truth expression profiles (cov_pert_key as index)
+            metric: metric to use for scipy cdist (default: "euclidean")
             
         Returns:
             Dict mapping cov_pert_key to nir score (0-1)
@@ -351,7 +336,7 @@ class MetricsEngine:
             distance_matrix = cdist(
                 predictions_cov.values, 
                 ground_truth_cov.values, 
-                metric='euclidean'
+                metric=metric
             )
             
             # Calculate nir for each perturbation in this covariate

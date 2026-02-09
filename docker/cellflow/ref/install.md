@@ -24,3 +24,4 @@ python -c "import rapids_singlecell as rsc"
 python -c "import torch"
 python -c "import cellflow"
 ```
+

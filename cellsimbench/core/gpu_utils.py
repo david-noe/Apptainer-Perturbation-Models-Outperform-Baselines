@@ -7,7 +7,7 @@ parallel training and inference across multiple folds.
 
 import os
 import logging
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +68,32 @@ def calculate_gpu_assignment(fold_indices: List[int], available_gpus: List[int])
     
     log.info(f"GPU assignment (round-robin): {gpu_assignment}")
     return gpu_assignment
+
+
+def calculate_exclusive_gpu_assignment(
+    fold_indices: List[int], available_gpus: List[int]
+) -> Tuple[Dict[int, int], int]:
+    """Assign GPUs round-robin but cap concurrency to len(available_gpus).
+
+    This ensures at most one job runs per GPU at a time. When there are more
+    folds than GPUs, excess jobs wait in the ThreadPoolExecutor queue until a
+    GPU becomes free.
+
+    Args:
+        fold_indices: List of fold indices to process.
+        available_gpus: List of available GPU IDs.
+
+    Returns:
+        Tuple of (gpu_assignment dict mapping fold_idx -> gpu_id,
+                  max_concurrent_jobs).
+    """
+    gpu_assignment = calculate_gpu_assignment(fold_indices, available_gpus)
+    max_concurrent = len(available_gpus)
+    log.info(
+        f"Exclusive GPU scheduling: {len(fold_indices)} folds, "
+        f"{max_concurrent} GPUs -> max {max_concurrent} concurrent jobs"
+    )
+    return gpu_assignment, max_concurrent
 
 
 # Note: gpu_environment() context manager removed since we now use Docker device_requests

@@ -8,6 +8,18 @@ import sys
 import json
 import logging
 from pathlib import Path
+
+# Disable RMM pool pre-allocation BEFORE importing any RAPIDS libraries.
+# By default, rapids-singlecell auto-enables a pool allocator on import that
+# reserves ~50-75% of GPU memory upfront. Disabling the pool lets CUDA allocate
+# on demand, freeing capacity for multiple jobs on the same GPU.
+import rmm
+import cupy as cp
+from rmm.allocators.cupy import rmm_cupy_allocator
+
+rmm.reinitialize(pool_allocator=False, managed_memory=False)
+cp.cuda.set_allocator(rmm_cupy_allocator)
+
 from cellflow_wrapper import CellFlowWrapper
 
 # Configure logging

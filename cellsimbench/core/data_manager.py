@@ -320,6 +320,37 @@ class DataManager:
         
         return deg_mask.values
     
+    def get_deg_directions(self, covariate_value: str, perturbation: str, gene_order: List[str]) -> np.ndarray:
+        """Get DEG direction (sign of score) for a specific covariate-perturbation combination.
+        
+        Returns +1 for upregulated genes, -1 for downregulated genes, and 0 for
+        genes not present in the DEG results.
+        
+        Args:
+            covariate_value: Value of the covariate (e.g., donor ID).
+            perturbation: Perturbation identifier.
+            gene_order: Ordered list of gene names to align directions to.
+            
+        Returns:
+            Array of directions (+1, -1, or 0) aligned with gene_order.
+        """
+        cov_pert_key = f"{covariate_value}_{perturbation}"
+        
+        if cov_pert_key not in self.deg_scores_dict:
+            return np.zeros(len(gene_order))
+        
+        scores = self.deg_scores_dict[cov_pert_key]
+        gene_names = self.deg_names_dict[cov_pert_key]
+        
+        # Sign of score = direction (+1 upregulated, -1 downregulated)
+        directions = np.sign(scores)
+        
+        directions_df = pd.DataFrame({'gene': gene_names, 'direction': directions})
+        # Handle duplicates: take the direction of the most significant entry (first in rank order)
+        directions_aggregated = directions_df.groupby('gene')['direction'].first()
+        
+        return directions_aggregated.reindex(gene_order, fill_value=0).values
+    
     def get_control_baseline(self, donor_id: Optional[str] = None) -> np.ndarray:
         """Get control baseline expression from uns using dataset-specific key.
         

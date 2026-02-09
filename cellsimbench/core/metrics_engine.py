@@ -7,6 +7,7 @@ response predictions against ground truth.
 
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from scipy.stats import pearsonr
 from sklearn.metrics import r2_score
@@ -18,17 +19,55 @@ from tqdm import tqdm
 from .data_manager import mse, wmse, pearson, r2_score_on_deltas, DataManager, mae, wmae
 
 
+def _gsea_worker(args):
+    """Worker function for parallel GSEA pathway recovery computation.
+    
+    Must be module-level (not a method) for ProcessPoolExecutor pickling.
+    Computes GSEA NES for both ground truth and predicted deltas, then
+    returns the Pearson correlation between their NES vectors.
+    """
+    pred_deltas, truth_deltas, gene_names, hallmark_library = args
+
+    # All-zero deltas (e.g. dataset_mean baseline vs itself) produce a singular
+    # covariance matrix in blitzgsea's KDE step -- return NaN immediately.
+    if np.all(pred_deltas == 0) or np.all(truth_deltas == 0):
+        return np.nan
+
+    import blitzgsea as blitz
+
+    def run_gsea(deltas):
+        signature = pd.DataFrame({0: gene_names, 1: deltas})
+        result = blitz.gsea(
+            signature, hallmark_library,
+            permutations=500, shared_null=True,
+            processes=2, seed=0,
+        )
+        return result['nes']
+
+    gt_nes = run_gsea(truth_deltas)
+    pred_nes = run_gsea(pred_deltas)
+
+    common = gt_nes.index.intersection(pred_nes.index)
+    if len(common) < 2:
+        return np.nan
+    corr, _ = pearsonr(pred_nes[common].values, gt_nes[common].values)
+    return corr
+
+
 class MetricsEngine:
 
-    def __init__(self, data_manager: DataManager, run_nir: bool = False) -> None:
+    def __init__(self, data_manager: DataManager, run_nir: bool = False, run_gsea: bool = False) -> None:
         """Initialize MetricsEngine with a DataManager instance.
         
         Args:
             data_manager: DataManager for accessing ground truth data and DEG weights.
             run_nir: Whether to run nir calculation (default False).
+            run_gsea: Whether to run GSEA pathway recovery analysis (default False).
         """
         self.data_manager = data_manager
         self.run_nir = run_nir
+        self.run_gsea = run_gsea
+        self._hallmark_library = self._load_hallmark_library()
         
     def calculate_all_metrics(
         self,
@@ -38,6 +77,7 @@ class MetricsEngine:
         ground_truth_deltas: Dict[str, pd.DataFrame],
         cached_nir_scores: Optional[Dict[str, float]] = None,
         cached_pds_scores: Optional[Dict[str, float]] = None,
+        cached_gsea_scores: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Dict[str, float]]:
 
         # Ensure predictions and ground truth have the same var_names
@@ -98,6 +138,9 @@ class MetricsEngine:
             # Get DEG weights and mask using covariate and perturbation
             weights = self.data_manager.get_deg_weights(covariate_value, condition, gene_order=common_var_names)
             deg_mask = self.data_manager.get_deg_mask(covariate_value, condition, gene_order=common_var_names, topn=100)
+            # DEG directions and full significance mask (no topn) for DEG recovery metric
+            deg_directions = self.data_manager.get_deg_directions(covariate_value, condition, gene_order=common_var_names)
+            deg_mask_all = self.data_manager.get_deg_mask(covariate_value, condition, gene_order=common_var_names)
             condition_metrics[cov_pert_key] = {
                 'mse': self._calculate_mse(pred_expression, truth_expression),
                 'mse_degs': self._calculate_mse(pred_expression[deg_mask], truth_expression[deg_mask]),
@@ -135,8 +178,36 @@ class MetricsEngine:
                 'nir': nir_scores[cov_pert_key] if cov_pert_key in nir_scores else np.nan,
                 'pds': pds_scores[cov_pert_key] if cov_pert_key in pds_scores else np.nan,
 
+                # DEG direction recovery metric (only vs dataset mean / pert baseline)
+                'deg_recovery_deltapert': self._calculate_deg_recovery(pred_deltas_mean, deg_directions, deg_mask_all),
             }
 
+        # Phase 2: GSEA pathway recovery (use cached scores, compute in parallel, or skip)
+        if cached_gsea_scores is not None:
+            for key in condition_metrics:
+                condition_metrics[key]['pathway_recovery_deltapert'] = cached_gsea_scores[key] if key in cached_gsea_scores else np.nan
+        elif self.run_gsea:
+            from concurrent.futures import ProcessPoolExecutor
+            gsea_args = []
+            gsea_keys = []
+            for cov_pert_key in condition_metrics:
+                pred_deltas_mean = predictions_deltas['deltamean'].loc[cov_pert_key].values
+                truth_deltas_mean = ground_truth_deltas['deltamean'].loc[cov_pert_key].values
+                gsea_args.append((pred_deltas_mean, truth_deltas_mean, common_var_names, self._hallmark_library))
+                gsea_keys.append(cov_pert_key)
+
+            with ProcessPoolExecutor(max_workers=36) as executor:
+                gsea_results = list(tqdm(
+                    executor.map(_gsea_worker, gsea_args),
+                    total=len(gsea_args),
+                    desc="GSEA pathway recovery"
+                ))
+
+            for key, score in zip(gsea_keys, gsea_results):
+                condition_metrics[key]['pathway_recovery_deltapert'] = score
+        else:
+            for key in condition_metrics:
+                condition_metrics[key]['pathway_recovery_deltapert'] = 0.0
             
         # Reorganize to metric -> cov_pert_key -> score format
         organized_metrics = {}
@@ -279,6 +350,45 @@ class MetricsEngine:
             Weighted R² score on pre-computed delta values.
         """
         return r2_score_on_deltas(truth_deltas, pred_deltas, weights)
+    
+    def _calculate_deg_recovery(self, pred_deltas: np.ndarray, deg_directions: np.ndarray, 
+                                deg_mask: np.ndarray) -> float:
+        """Calculate DEG direction recovery score.
+        
+        For each significant DEG, checks whether the sign of the predicted delta
+        matches the ground-truth DEG direction. Returns the fraction of significant
+        DEGs with correctly recovered direction.
+        
+        Args:
+            pred_deltas: Pre-computed predicted delta values (aligned to gene_order).
+            deg_directions: Array of DEG directions (+1/-1/0, aligned to gene_order).
+            deg_mask: Boolean mask of significant DEGs (aligned to gene_order).
+            
+        Returns:
+            Fraction of significant DEGs with correct direction in predicted deltas.
+        """
+        if deg_mask.sum() == 0:
+            return np.nan
+        pred_signs = np.sign(pred_deltas[deg_mask])
+        gt_signs = deg_directions[deg_mask]
+        return np.mean(pred_signs == gt_signs)
+    
+    def _load_hallmark_library(self) -> Dict[str, List[str]]:
+        """Load MSigDB Hallmark 2020 gene set library from Enrichr GMT format.
+        
+        Returns:
+            Dictionary mapping pathway names to lists of gene symbols.
+        """
+        hallmark_path = Path(__file__).parent.parent.parent / 'data' / 'ref' / 'MSigDB_Hallmark_2020.txt'
+        library = {}
+        with open(hallmark_path) as f:
+            for line in f:
+                if line.strip():
+                    items = line.strip().split('\t')
+                    pathway_name = items[0]
+                    genes = [g for g in items[2:] if g]
+                    library[pathway_name] = genes
+        return library
     
     def _calculate_nir_scores(
         self, 

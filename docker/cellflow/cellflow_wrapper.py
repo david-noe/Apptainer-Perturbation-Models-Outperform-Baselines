@@ -72,7 +72,7 @@ class CellFlowWrapper:
         # ── Compute PCA on training data, project val/test ──
         n_comps = self.hyperparams['n_pca_components']
         log.info(f"Computing centered PCA ({n_comps} components) on training data...")
-        centered_pca(adata_train, method="rapids", keep_centered_data=False, n_comps=n_comps)
+        centered_pca(adata_train, method="scanpy", keep_centered_data=False, n_comps=n_comps)
         project_pca(adata_val, ref_adata=adata_train)
         project_pca(adata_test, ref_adata=adata_train)
 

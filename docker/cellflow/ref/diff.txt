@@ -1,0 +1,15 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 152c690..ebab30b 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -41,8 +41,8 @@ dependencies = [
+   "ott-jax==0.5",
+   "pyarrow",             # required for dask.dataframe
+   "scanpy",
+-  "scikit-learn==1.5.1",
+-  "scipy<1.16",          # see https://github.com/statsmodels/statsmodels/issues/9584
++  "scikit-learn",
++  "scipy",          # see https://github.com/statsmodels/statsmodels/issues/9584 # FIXED
+   "session-info",
+ ]
+ 

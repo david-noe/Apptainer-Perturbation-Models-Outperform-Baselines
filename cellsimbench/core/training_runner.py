@@ -17,7 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from .data_manager import DataManager
 from .docker_runner import DockerRunner
-from .gpu_utils import get_available_gpus, calculate_gpu_assignment
+from .gpu_utils import get_available_gpus, calculate_gpu_assignment, calculate_exclusive_gpu_assignment
 from ..utils.hash_utils import calculate_input_hash, get_model_path_for_config
 
 log = logging.getLogger(__name__)
@@ -146,10 +146,12 @@ class TrainingRunner:
         
         # GPU assignment
         available_gpus = get_available_gpus()
-        gpu_assignment = calculate_gpu_assignment(fold_indices, available_gpus)
-        
-        # Use as many workers as folds (GPUs will be assigned round-robin)
-        max_workers = len(fold_indices)
+
+        if getattr(self.config, 'exclusive_gpu', False):
+            gpu_assignment, max_workers = calculate_exclusive_gpu_assignment(fold_indices, available_gpus)
+        else:
+            gpu_assignment = calculate_gpu_assignment(fold_indices, available_gpus)
+            max_workers = len(fold_indices)
         
         # Limit parallelism if requested by user
         max_parallel = getattr(self.config.execution, 'max_parallel_folds', None)

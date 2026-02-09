@@ -75,6 +75,14 @@ uv run cellsimbench train model=fmlp_esm2 dataset=norman19
 # Run benchmark (prediction + evaluation)
 uv run cellsimbench benchmark model=fmlp_esm2 dataset=norman19
 
+# Enable NIR (Nearest In-distribution Reference) analysis (slow)
+uv run cellsimbench benchmark model=fmlp_esm2 dataset=norman19 +run_nir_analysis=true
+
+# Exclusive GPU scheduling (one job per GPU at a time, remaining jobs wait)
+# Useful for GPU-hungry models like CellFlow that need the full GPU
+uv run cellsimbench train model=cellflow dataset=norman19 +exclusive_gpu=true
+uv run cellsimbench benchmark model=cellflow dataset=norman19 +exclusive_gpu=true
+
 # Train and benchmark across multiple datasets
 for dataset in norman19 wessels23; do
     uv run cellsimbench train model=fmlp_esm2 dataset=$dataset
@@ -82,7 +90,7 @@ for dataset in norman19 wessels23; do
 done
 ```
 
-**Available models:** `fmlp_esm2`, `fmlp_geneformer`, `fmlp_scgpt`, `fmlp_genept`, `gears`, `sclambda`, `scgpt`, `presage`
+**Available models:** `fmlp_esm2`, `fmlp_geneformer`, `fmlp_scgpt`, `fmlp_genept`, `gears`, `sclambda`, `scgpt`, `presage`, `cellflow`
 
 **Available datasets:** `adamson16`, `frangieh21`, `kaden25fibroblast`, `kaden25rpe1`, `nadig25hepg2`, `nadig25jurkat`, `norman19`, `replogle22k562`, `replogle22k562gwps`, `replogle22rpe1`, `sunshine23`, `tian21crispra`, `tian21crispri`, `wessels23`
 
@@ -219,7 +227,7 @@ python data/add_interpolated_baseline.py --all --workers 4
 
 ### Generating Gene Embeddings (Optional)
 
-Required only if you plan to run the fMLP models (fmlp_esm2, fmlp_geneformer, fmlp_genept):
+Required only if you plan to run the fMLP models (fmlp_esm2, fmlp_geneformer, fmlp_genept) or CellFlow (cellflow):
 
 ```bash
 # Create the required conda environments
@@ -260,6 +268,7 @@ bash docker/gears/build.sh
 bash docker/sclambda/build.sh
 bash docker/scgpt/build.sh
 bash docker/presage/build.sh
+bash docker/cellflow/build.sh
 
 # Or build individually as needed
 bash docker/<model_name>/build.sh

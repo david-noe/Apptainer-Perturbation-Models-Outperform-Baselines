@@ -29,7 +29,18 @@ import multiprocessing
 # Metric display names and whether higher is better
 METRIC_INFO = {
     'mse': {'display': 'MSE', 'higher_better': False},
+    'mse_deltactrl': {'display': 'MSE(Δ Ctrl)', 'higher_better': False},
+    'mse_degs': {'display': 'MSE(DEGs)', 'higher_better': False},
+    'mse_deltactrl_degs': {'display': 'MSE(Δ Ctrl DEG)', 'higher_better': False},
     'wmse': {'display': 'WMSE', 'higher_better': False},
+    'wmse_deltactrl': {'display': 'WMSE(Δ Ctrl)', 'higher_better': False},
+    'mae': {'display': 'MAE', 'higher_better': False},
+    'mae_deltactrl': {'display': 'MAE(Δ Ctrl)', 'higher_better': False},
+    'mae_degs': {'display': 'MAE(DEGs)', 'higher_better': False},
+    'mae_deltactrl_degs': {'display': 'MAE(Δ Ctrl DEG)', 'higher_better': False},
+    'wmae': {'display': 'Weighted MAE', 'higher_better': False},
+    'wmae_deltactrl': {'display': 'Weighted MAE(Δ Ctrl)', 'higher_better': False},
+    'pds': {'display': 'PDS', 'higher_better': True},
     'pearson_deltactrl': {'display': 'Pearson(Δ Ctrl)', 'higher_better': True},
     'pearson_deltactrl_degs': {'display': 'Pearson(Δ Ctrl DEG)', 'higher_better': True},
     'pearson_deltapert': {'display': 'Pearson(Δ Pert)', 'higher_better': True},

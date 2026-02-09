@@ -26,6 +26,37 @@ def mse(x1: np.ndarray, x2: np.ndarray) -> float:
     """
     return np.mean((x1 - x2) ** 2)
 
+def mae(x1: np.ndarray, x2: np.ndarray) -> float:
+    """Calculate Mean Absolute Error.
+    
+    Args:
+        x1: First array of values.
+        x2: Second array of values.
+        
+    Returns:
+        Mean absolute error between x1 and x2.
+
+    """
+    return np.mean(np.abs(x1 - x2))
+
+def wmae(x1: np.ndarray, x2: np.ndarray, weights: np.ndarray) -> float:
+    """Calculate Weighted Mean Absolute Error.
+    
+    Args:
+
+        x1: First array of values.
+        x2: Second array of values.
+        weights: Weight array for each element.
+        
+    Returns:
+        Weighted mean absolute error between x1 and x2.
+    """
+    weights_arr = np.array(weights)
+    x1_arr = np.array(x1)
+    x2_arr = np.array(x2)
+    normalized_weights = weights_arr / np.sum(weights_arr)
+    return np.sum(normalized_weights * np.abs(x1_arr - x2_arr))
+
 def wmse(x1: np.ndarray, x2: np.ndarray, weights: np.ndarray) -> float:
     """Calculate Weighted Mean Squared Error.
     
@@ -71,9 +102,10 @@ def r2_score_on_deltas(delta_true: np.ndarray, delta_pred: np.ndarray,
     if len(delta_true) < 2 or len(delta_pred) < 2 or delta_true.shape != delta_pred.shape:
         return np.nan
     if weights is not None and np.sum(weights) != 0:
-        return r2_score(delta_true, delta_pred, sample_weight=weights)
+        # Clip to -1 to avoid unrestricted negative R2
+        return max(r2_score(delta_true, delta_pred, sample_weight=weights), -1.0)
     else:
-        return r2_score(delta_true, delta_pred)
+        return max(r2_score(delta_true, delta_pred), -1.0)
 
 
 class DataManager:
@@ -239,7 +271,7 @@ class DataManager:
 
         return weights.values
     
-    def get_deg_mask(self, covariate_value: str, perturbation: str, pval_threshold: float = 0.05, common_var_names_mask: np.ndarray=None) -> np.ndarray:
+    def get_deg_mask(self, covariate_value: str, perturbation: str, gene_order: List[str], pval_threshold: float = 0.05, topn: int = None) -> np.ndarray:
         """
         Get DEG mask for a specific covariate-perturbation combination.
         
@@ -247,7 +279,7 @@ class DataManager:
             covariate_value: Value of the covariate (e.g., donor ID)
             perturbation: Perturbation identifier
             pval_threshold: P-value threshold for significance
-            
+            topn: Number of top DEGs to use. If None, all DEGs are used.
         Returns:
             Boolean array indicating DEG positions
         """
@@ -275,14 +307,54 @@ class DataManager:
             'significant': sig_mask
         })
         
-        # Group by gene and take minimum p-value, then check significance
-        pvals_aggregated = pvals_df.groupby('gene')['pval'].min()
-        deg_mask_aggregated = pvals_aggregated < pval_threshold
+        if topn is not None:
+            # Select top N genes by p-value, regardless of significance threshold
+            pvals_df_sorted = pvals_df.sort_values(by='pval', ascending=True).head(topn)
+            pvals_df['significant'] = False
+            pvals_df.loc[pvals_df.index.isin(pvals_df_sorted.index), 'significant'] = True
+            
+            # Group by gene - gene is significant if ANY of its entries are in top N
+            deg_mask_aggregated = pvals_df.groupby('gene')['significant'].any()
+        else:
+            # Group by gene and take minimum p-value, then check significance
+            pvals_aggregated = pvals_df.groupby('gene')['pval'].min()
+            deg_mask_aggregated = pvals_aggregated < pval_threshold
         
         # Reindex to match adata.var_names
         deg_mask = deg_mask_aggregated.reindex(self.adata.var_names[common_var_names_mask] if common_var_names_mask is not None else self.adata.var_names, fill_value=False)
         
         return deg_mask.values
+    
+    def get_deg_directions(self, covariate_value: str, perturbation: str, gene_order: List[str]) -> np.ndarray:
+        """Get DEG direction (sign of score) for a specific covariate-perturbation combination.
+        
+        Returns +1 for upregulated genes, -1 for downregulated genes, and 0 for
+        genes not present in the DEG results.
+        
+        Args:
+            covariate_value: Value of the covariate (e.g., donor ID).
+            perturbation: Perturbation identifier.
+            gene_order: Ordered list of gene names to align directions to.
+            
+        Returns:
+            Array of directions (+1, -1, or 0) aligned with gene_order.
+        """
+        cov_pert_key = f"{covariate_value}_{perturbation}"
+        
+        if cov_pert_key not in self.deg_scores_dict:
+            return np.zeros(len(gene_order))
+        
+        scores = self.deg_scores_dict[cov_pert_key]
+        gene_names = self.deg_names_dict[cov_pert_key]
+        
+        # Sign of score = direction (+1 upregulated, -1 downregulated)
+        directions = np.sign(scores)
+        
+        directions_df = pd.DataFrame({'gene': gene_names, 'direction': directions})
+        # Handle duplicates: take the direction of the most significant entry (first in rank order)
+        directions_aggregated = directions_df.groupby('gene')['direction'].first()
+        
+        return directions_aggregated.reindex(gene_order, fill_value=0).values
     
     def get_control_baseline(self, donor_id: Optional[str] = None) -> np.ndarray:
         """Get control baseline expression from uns using dataset-specific key.

@@ -1,1 +1,4 @@
 *.csv
+*.html
+.Rhistory
+gsea_input_for_R/

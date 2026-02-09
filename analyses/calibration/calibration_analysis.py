@@ -4,7 +4,6 @@
 # ============================================================================
 # IMPORTS AND SETUP
 # ============================================================================
-import scanpy as sc
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,7 +13,6 @@ from scipy import stats
 from tqdm import tqdm
 import pickle
 import json
-from scperturb import edist
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -57,7 +55,22 @@ DATASETS = [
 
 METRICS_CONFIG = {
     'mse': {'higher_better': False, 'perfect': 0.0},
+    'mse_degs': {'higher_better': False, 'perfect': 0.0},
+    "mse_deltactrl": {'higher_better': False, 'perfect': 0.0},
+    "mse_deltactrl_degs": {'higher_better': False, 'perfect': 0.0},
+
     'wmse': {'higher_better': False, 'perfect': 0.0},
+    "wmse_deltactrl": {'higher_better': False, 'perfect': 0.0},
+
+    'mae': {'higher_better': False, 'perfect': 0.0},
+    'mae_degs': {'higher_better': False, 'perfect': 0.0},
+    "mae_deltactrl": {'higher_better': False, 'perfect': 0.0},
+    "mae_deltactrl_degs": {'higher_better': False, 'perfect': 0.0},
+
+    'wmae': {'higher_better': False, 'perfect': 0.0},
+    "wmae_deltactrl": {'higher_better': False, 'perfect': 0.0},
+
+
     'pearson_deltactrl': {'higher_better': True, 'perfect': 1.0},
     'pearson_deltactrl_degs': {'higher_better': True, 'perfect': 1.0},
     'pearson_deltapert': {'higher_better': True, 'perfect': 1.0},
@@ -68,7 +81,9 @@ METRICS_CONFIG = {
     'r2_deltapert_degs': {'higher_better': True, 'perfect': 1.0},
     'weighted_r2_deltactrl': {'higher_better': True, 'perfect': 1.0},
     'weighted_r2_deltapert': {'higher_better': True, 'perfect': 1.0},
+
     'nir': {'higher_better': True, 'perfect': 1.0},
+    'pds': {'higher_better': True, 'perfect': 1.0},
 }
 
 print("Calibration analysis initialized")
@@ -76,8 +91,6 @@ print(f"Will analyze {len(DATASETS)} datasets with {len(METRICS_CONFIG)} metrics
 print(f"Results will be saved to: {RESULTS_DIR}")
 print(f"Force recalculation: {args.force}")
 print(f"Parallel jobs: {args.njobs}")
-print("Note: E-distance matrices will be cached for faster reruns. Delete cache files to recompute.")
-print("Note: For datasets with >400 perturbations, we subsample to 400 for e-distance calculation (seed=42)")
 
 # %%
 # ============================================================================
@@ -141,7 +154,6 @@ if final_results_exist and not args.force:
     for dataset in DATASETS:
         dataset_quality[dataset] = {
             'deg_counts': {},
-            'per_pert_edist': {},
             'quality_measures': {}
         }
         
@@ -151,9 +163,6 @@ if final_results_exist and not args.force:
             dataset_quality[dataset]['quality_measures'] = {
                 'avg_degs': quality_row['avg_degs'],
                 'cv_degs': quality_row['cv_degs'],
-                'mean_edist': quality_row['mean_edist'],
-                'median_edist': quality_row['median_edist'],
-                'std_edist': quality_row['std_edist'],
                 'n_cells': quality_row['n_cells'],
                 'n_perturbations': quality_row['n_perturbations'],
                 'cells_per_pert': quality_row['cells_per_pert']
@@ -168,8 +177,6 @@ if final_results_exist and not args.force:
                 pert_data = dataset_data[dataset_data['perturbation'] == pert].iloc[0]
                 if not pd.isna(pert_data['deg_count']):
                     dataset_quality[dataset]['deg_counts'][pert] = pert_data['deg_count']
-                if not pd.isna(pert_data['avg_edist']):
-                    dataset_quality[dataset]['per_pert_edist'][pert] = pert_data['avg_edist']
     
     # Also need to reconstruct dataset_configs and dataset_metrics for some operations
     # These are lightweight - just create empty placeholders since they're not critical for plots
@@ -271,7 +278,7 @@ if not SKIP_COMPUTATION:
         # Filter metrics with too few perturbations 
         # This is important for metrics like pearson_deltapert_degs where many perturbations may have no DEGs
         # We specifically check the interpolated_duplicate baseline since that's what we use for DRF calculation
-        MIN_PERTURBATIONS = 10
+        MIN_PERTURBATIONS = 0
         metrics_to_filter = []
         
         # Check each metric for interpolated duplicate baseline only
@@ -328,7 +335,7 @@ if not SKIP_COMPUTATION:
     
     # Define function to extract quality measures from a single dataset
     def extract_quality_measures(dataset_name):
-        """Extract quality measures from a dataset (DEGs, e-distance, etc.)"""
+        """Extract quality measures from a dataset (DEGs, etc.)"""
         print(f"\nExtracting quality measures for {dataset_name}...")
         
         # Load dataset config if not already loaded
@@ -356,81 +363,13 @@ if not SKIP_COMPUTATION:
         avg_degs = np.mean(deg_values)
         cv_degs = np.std(deg_values) / avg_degs if avg_degs > 0 else 0
         
-        # 2. E-distance calculation using scperturb
-        # Check for cached e-distance matrix
-        edist_cache_path = RESULTS_DIR / f'{dataset_name}_edist_matrix.pkl'
-        
-        if edist_cache_path.exists():
-            print(f"    Loading cached e-distance matrix from {edist_cache_path.name}")
-            with open(edist_cache_path, 'rb') as f:
-                estats = pickle.load(f)
-        else:
-            # Subsample if too many perturbations (for computational efficiency)
-            unique_conditions = adata.obs['condition'].unique()
-            non_control_conditions = [c for c in unique_conditions if 'control' not in c.lower()]
-            N_SUBSAMPLE = 300
-            if len(non_control_conditions) > N_SUBSAMPLE:
-                print(f"    Dataset has {len(non_control_conditions)} perturbations - subsampling to {N_SUBSAMPLE} for e-distance calculation")
-                np.random.seed(42)
-                sampled_conditions = np.random.choice(non_control_conditions, size=N_SUBSAMPLE, replace=False)
-                
-                # Also include control conditions
-                control_conditions = [c for c in unique_conditions if 'control' in c.lower()]
-                all_selected_conditions = list(sampled_conditions) + control_conditions
-                
-                # Subset adata to selected conditions
-                adata_subset = adata[adata.obs['condition'].isin(all_selected_conditions)].copy()
-                print(f"      Subsampled to {len(all_selected_conditions)} conditions ({len(sampled_conditions)} perturbations + {len(control_conditions)} controls)")
-            else:
-                adata_subset = adata
-                print(f"    Using all {len(non_control_conditions)} perturbations for e-distance calculation")
-            
-            print("    Calculating e-distance matrix (this may take a while)...")
-            # Calculate e-distance in PCA space
-            print("      Computing PCA...")
-            sc.pp.pca(adata_subset, n_comps=50)
-            
-            # Calculate e-distance matrix
-            estats = edist(adata_subset, obs_key='condition')
-            
-            # Cache the result
-            print(f"    Saving e-distance matrix to {edist_cache_path.name}")
-            with open(edist_cache_path, 'wb') as f:
-                pickle.dump(estats, f)
-        
-        # Get all non-control perturbations
-        non_control_perts = [p for p in estats.index if 'control' not in p.lower()]
-        
-        # Calculate per-perturbation average e-distance
-        per_pert_edist = {}
-        for pert in non_control_perts:
-            # Get e-distances from this pert to all other non-control perts
-            edist_to_others = []
-            for other_pert in non_control_perts:
-                if pert != other_pert:  # Exclude self
-                    edist_to_others.append(estats.loc[pert, other_pert])
-            if edist_to_others:
-                per_pert_edist[pert] = np.mean(edist_to_others)
-        
-        # Calculate overall mean e-distance (excluding control and self-comparisons)
-        edist_values = []
-        for i, pert1 in enumerate(non_control_perts):
-            for j, pert2 in enumerate(non_control_perts):
-                if i < j:  # Upper triangle only, excluding diagonal
-                    edist_values.append(estats.loc[pert1, pert2])
-        
-        mean_edist = np.mean(edist_values) if edist_values else 0
-        median_edist = np.median(edist_values) if edist_values else 0
-        std_edist = np.std(edist_values) if edist_values else 0
-        
-        # 3. Basic dataset statistics
+        # 2. Basic dataset statistics
         n_cells = adata.n_obs
         n_perturbations = len([c for c in adata.obs['condition'].unique() 
                               if 'control' not in c.lower()])
         cells_per_pert = n_cells / n_perturbations if n_perturbations > 0 else 0
         
         print(f"  Avg DEGs: {avg_degs:.1f}, CV: {cv_degs:.2f}")
-        print(f"  Mean e-distance: {mean_edist:.2f} ± {std_edist:.2f}")
         print(f"  {n_perturbations} perturbations, {cells_per_pert:.1f} cells/pert")
         
         # Clear adata from memory
@@ -440,13 +379,9 @@ if not SKIP_COMPUTATION:
         # Return the quality measures
         return {
             'deg_counts': deg_counts,
-            'per_pert_edist': per_pert_edist,
             'quality_measures': {
                 'avg_degs': avg_degs,
                 'cv_degs': cv_degs,
-                'mean_edist': mean_edist,
-                'median_edist': median_edist,
-                'std_edist': std_edist,
                 'n_cells': n_cells,
                 'n_perturbations': n_perturbations,
                 'cells_per_pert': cells_per_pert
@@ -499,6 +434,17 @@ if not SKIP_COMPUTATION:
         'r2_deltapert',
         'r2_deltapert_degs',
         'weighted_r2_deltapert'
+    ]
+    
+    # Define metrics that should use mean baseline instead of control baseline for drf_ctrl
+    # These metrics measure correlation/R2 with delta from control, so the control baseline
+    # gives NaN (zero variance in predictions). Use mean baseline as negative control instead.
+    MEAN_BASELINE_METRICS_FOR_CTRL = [
+        'pearson_deltactrl',
+        'pearson_deltactrl_degs',
+        'r2_deltactrl',
+        'r2_deltactrl_degs',
+        'weighted_r2_deltactrl'
     ]
 
     for dataset_name, baseline_metrics in dataset_metrics.items():
@@ -558,6 +504,11 @@ if not SKIP_COMPUTATION:
                     return drf
                 
                 
+                # Get interpolated duplicate performance (used for drf_ctrl and drf_interpolated)
+                interp_dup_perf = None
+                if metric_name in interp_dup_metrics and pert_key in interp_dup_metrics[metric_name]:
+                    interp_dup_perf = interp_dup_metrics[metric_name][pert_key]
+                
                 try:
 
                     # Calculate DRF with respect to dataset mean (or control for special metrics)
@@ -573,24 +524,29 @@ if not SKIP_COMPUTATION:
                             pert_drfs_mean[pert_key] = drf_mean
                     
 
-                    # Calculate DRF with respect to control
-                    if metric_name in control_metrics and pert_key in control_metrics[metric_name]:
-                        drf_ctrl = calculate_drf(control_metrics[metric_name][pert_key], techdup_perf, config)
-                        if not np.isnan(drf_ctrl):
-                            pert_drfs_ctrl[pert_key] = drf_ctrl
+                    # Calculate DRF with respect to control (using interpolated duplicate as ceiling)
+                    # For deltactrl correlation metrics, use mean baseline instead (control baseline gives NaN)
+                    if metric_name in MEAN_BASELINE_METRICS_FOR_CTRL:
+                        baseline_for_ctrl = mean_metrics
+                    else:
+                        baseline_for_ctrl = control_metrics
+                    
+                    if metric_name in baseline_for_ctrl and pert_key in baseline_for_ctrl[metric_name]:
+                        if interp_dup_perf is not None and not np.isnan(interp_dup_perf):
+                            drf_ctrl = calculate_drf(baseline_for_ctrl[metric_name][pert_key], interp_dup_perf, config)
+                            if not np.isnan(drf_ctrl):
+                                pert_drfs_ctrl[pert_key] = drf_ctrl
                     
                     # Calculate DRF using interpolated duplicate instead of tech_dup
                     # For pearson_deltapert metrics, use control baseline as negative control
-                    if metric_name in interp_dup_metrics and pert_key in interp_dup_metrics[metric_name]:
-                        interp_dup_perf = interp_dup_metrics[metric_name][pert_key]
-                        
+                    if interp_dup_perf is not None and not np.isnan(interp_dup_perf):
                         # Use control baseline for special metrics, mean baseline for others
                         if metric_name in CONTROL_BASELINE_METRICS:
                             baseline_for_interpolated = control_metrics
                         else:
                             baseline_for_interpolated = mean_metrics
                         
-                        if metric_name in baseline_for_interpolated and pert_key in baseline_for_interpolated[metric_name] and not np.isnan(interp_dup_perf):
+                        if metric_name in baseline_for_interpolated and pert_key in baseline_for_interpolated[metric_name]:
                             # Use interpolated duplicate as the "best" instead of tech_dup
                             drf_interpolated = calculate_drf(baseline_for_interpolated[metric_name][pert_key], interp_dup_perf, config)
                             if not np.isnan(drf_interpolated):
@@ -704,7 +660,6 @@ if not SKIP_COMPUTATION:
             continue
         
         # Get per-perturbation quality metrics (already calculated)
-        per_pert_edist = dataset_quality.get(dataset_name, {}).get('per_pert_edist', {})
         deg_counts = dataset_quality.get(dataset_name, {}).get('deg_counts', {})
         
         # Iterate through each metric and perturbation
@@ -721,8 +676,7 @@ if not SKIP_COMPUTATION:
                     'dataset': dataset_name,
                     'metric': metric_name,
                     'perturbation': condition,
-                    'deg_count': deg_counts.get(condition, np.nan),
-                    'avg_edist': per_pert_edist.get(condition, np.nan)
+                    'deg_count': deg_counts.get(condition, np.nan)
                 }
                 
                 # Add drf_mean
@@ -878,167 +832,6 @@ else:
     plt.savefig(RESULTS_DIR / 'calibration_heatmap.png', dpi=300, bbox_inches='tight')
     plt.show()
     print("Heatmap saved to", RESULTS_DIR / 'calibration_heatmap.png')
-
-# %%
-# ============================================================================
-# VISUALIZATION: Dataset-level Scatter Plots - Mean E-dist vs Median DRF (PER METRIC)
-# ============================================================================
-
-print("\nGenerating dataset-level scatter plots (Mean E-distance vs Median DRF) for each metric...")
-
-# Always plot all DRF types
-drf_types_to_plot = ['drf_mean', 'drf_ctrl', 'drf_interpolated']
-
-# Create a separate plot for each metric
-for metric_name in METRICS_CONFIG.keys():
-    print(f"\nCreating scatter plot for {metric_name}...")
-    
-    # Create subplots for each DRF type
-    n_drf_types = len(drf_types_to_plot)
-    fig, axes = plt.subplots(1, n_drf_types, figsize=(10 * n_drf_types, 8))
-    if n_drf_types == 1:
-        axes = [axes]
-    
-    for drf_idx, drf_type in enumerate(drf_types_to_plot):
-        ax = axes[drf_idx]
-        
-        # Collect data for this metric and DRF type
-        metric_scatter_data = []
-        
-        for dataset_name in DATASETS:
-            # Get mean e-distance from quality_df
-            dataset_quality_row = quality_df[quality_df['dataset'] == dataset_name]
-            if dataset_quality_row.empty:
-                continue
-            
-            mean_edist = dataset_quality_row['mean_edist'].iloc[0]
-            median_edist = dataset_quality_row['median_edist'].iloc[0]
-            
-            # Get mean DRF for THIS SPECIFIC METRIC and DRF type for this dataset
-            # results_df MUST have drf_type column with all three types
-            metric_dataset_results = results_df[(results_df['dataset'] == dataset_name) & 
-                                               (results_df['metric'] == metric_name) &
-                                               (results_df['drf_type'] == drf_type)]
-            
-            if metric_dataset_results.empty:
-                continue
-            
-            mean_drf_metric = metric_dataset_results['mean_drf'].iloc[0]
-            
-            # Calculate SEM for DRF (for this specific metric and DRF type)
-            metric_drfs = []
-            # Select the correct per_pert_drf dictionary based on DRF type
-            if drf_type == 'drf_mean' and dataset_name in per_pert_drf_mean:
-                if metric_name in per_pert_drf_mean[dataset_name]:
-                    metric_drfs = list(per_pert_drf_mean[dataset_name][metric_name].values())
-            elif drf_type == 'drf_ctrl' and dataset_name in per_pert_drf_ctrl:
-                if metric_name in per_pert_drf_ctrl[dataset_name]:
-                    metric_drfs = list(per_pert_drf_ctrl[dataset_name][metric_name].values())
-            elif drf_type == 'drf_interpolated' and dataset_name in per_pert_drf_interpolated:
-                if metric_name in per_pert_drf_interpolated[dataset_name]:
-                    metric_drfs = list(per_pert_drf_interpolated[dataset_name][metric_name].values())
-            elif dataset_name in per_pert_drf and metric_name in per_pert_drf[dataset_name]:
-                # Fallback to legacy per_pert_drf
-                metric_drfs = list(per_pert_drf[dataset_name][metric_name].values())
-            
-            sem_drf = np.std(metric_drfs) / np.sqrt(len(metric_drfs)) if metric_drfs else 0
-            
-            # Calculate SEM for e-distance
-            edist_values = []
-            if dataset_name in dataset_quality:
-                per_pert_edist = dataset_quality[dataset_name].get('per_pert_edist', {})
-                edist_values = list(per_pert_edist.values())
-            
-            sem_edist = np.std(edist_values) / np.sqrt(len(edist_values)) if edist_values else 0
-            
-            metric_scatter_data.append({
-                'dataset': dataset_name,
-                'mean_edist': mean_edist,
-                'median_edist': median_edist,
-                'sem_edist': sem_edist,
-                'mean_drf': mean_drf_metric,
-                'sem_drf': sem_drf
-            })
-        
-        # Create the scatter plot for this metric and DRF type
-        if metric_scatter_data:
-            # Use different colors for each dataset
-            colors = plt.cm.Set2(np.linspace(0, 1, len(metric_scatter_data)))
-            
-            for i, data in enumerate(metric_scatter_data):
-                ax.errorbar(
-                    data['mean_edist'],
-                    data['mean_drf'],
-                    xerr=data['sem_edist'],
-                    yerr=data['sem_drf'],
-                    fmt='o',
-                    markersize=12,
-                    capsize=6,
-                    capthick=2,
-                    label=data['dataset'],
-                    color=colors[i],
-                    alpha=0.8,
-                    linewidth=2
-                )
-                
-                # Add dataset label next to point
-                ax.annotate(
-                    data['dataset'],
-                    (data['mean_edist'], data['mean_drf']),
-                    xytext=(8, 8),
-                    textcoords='offset points',
-                    fontsize=9,
-                    fontweight='bold',
-                    alpha=0.9
-                )
-            
-            # Calculate and show correlation
-            if len(metric_scatter_data) >= 3:
-                x_vals = [d['mean_edist'] for d in metric_scatter_data]
-                y_vals = [d['mean_drf'] for d in metric_scatter_data]
-                
-                # Pearson correlation
-                corr_pearson, pval_pearson = stats.pearsonr(x_vals, y_vals)
-                # Spearman correlation  
-                corr_spearman, pval_spearman = stats.spearmanr(x_vals, y_vals)
-                
-                # Add trend line
-                z = np.polyfit(x_vals, y_vals, 1)
-                p = np.poly1d(z)
-                x_trend = np.linspace(min(x_vals) * 0.9, max(x_vals) * 1.1, 100)
-                ax.plot(x_trend, p(x_trend), 'r--', alpha=0.5, linewidth=2)
-                
-                # Add correlation text box
-                textstr = f'Pearson r = {corr_pearson:.3f} (p = {pval_pearson:.3f})\nSpearman ρ = {corr_spearman:.3f} (p = {pval_spearman:.3f})'
-                ax.text(0.05, 0.95, textstr,
-                       transform=ax.transAxes,
-                       verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
-                       fontsize=10)
-            
-            ax.set_xlabel('Average E-distance in Dataset', fontsize=12, fontweight='bold')
-            ax.set_ylabel(f'Mean DRF ({drf_type.replace("drf_", "")})', fontsize=12, fontweight='bold')
-            ax.set_title(f'{drf_type.replace("drf_", "").title()} Baseline', fontsize=13, fontweight='bold')
-            ax.grid(True, alpha=0.3)
-            
-            # Don't set fixed y limits since DRF can be negative now
-            y_vals_all = [d['mean_drf'] for d in metric_scatter_data]
-            if y_vals_all:
-                ymin, ymax = min(y_vals_all), max(y_vals_all)
-                y_range = ymax - ymin
-                ax.set_ylim(ymin - 0.1 * y_range, ymax + 0.1 * y_range)
-    
-    # Add overall title and save
-    if n_drf_types > 1:
-        fig.suptitle(f'{metric_name}: Dataset Quality vs Calibration (4 DRF Types Shown SEPARATELY)', fontsize=14, fontweight='bold', y=1.02)
-    
-    plt.tight_layout()
-    plt.savefig(RESULTS_DIR / f'dataset_scatter_{metric_name}_four_drf_types_separate.png', dpi=300, bbox_inches='tight')
-    plt.show()
-    
-    print(f"  Saved {metric_name} scatter plot to {RESULTS_DIR / f'dataset_scatter_{metric_name}_four_drf_types_separate.png'}")
-
-
 
 # %%
 # ============================================================================
@@ -1356,19 +1149,22 @@ for drf_type in results_df['drf_type'].unique():
     for dataset, drf_val in mean_drf_by_dataset.head(3).items():
         if dataset in quality_df['dataset'].values:
             quality_row = quality_df[quality_df['dataset'] == dataset].iloc[0]
-            print(f"    {dataset:15s}: DRF={drf_val:.3f}, DEGs={quality_row['avg_degs']:.0f}, "
-                  f"e-dist={quality_row['median_edist']:.1f}")
+            print(f"    {dataset:15s}: DRF={drf_val:.3f}, DEGs={quality_row['avg_degs']:.0f}")
 
-print("\n3. NIR ANALYSIS:")
+print("\n3. NIR AND PDS ANALYSIS:")
 print("-" * 40)
 
 for drf_type in results_df['drf_type'].unique():
     print(f"\n  {drf_type}:")
     drf_subset = results_df[results_df['drf_type'] == drf_type]
-    centroid_data = drf_subset[drf_subset['metric'] == 'nir']
-    if not centroid_data.empty:
-        print(f"    Mean DRF: {centroid_data['mean_drf'].mean():.3f}")
-        print(f"    Range across datasets: {centroid_data['mean_drf'].min():.3f} - {centroid_data['mean_drf'].max():.3f}")
+    nir_data = drf_subset[drf_subset['metric'] == 'nir']
+    pds_data = drf_subset[drf_subset['metric'] == 'pds']
+    if not nir_data.empty:
+        print(f"    Mean DRF: {nir_data['mean_drf'].mean():.3f}")
+        print(f"    Range across datasets: {nir_data['mean_drf'].min():.3f} - {nir_data['mean_drf'].max():.3f}")
+    if not pds_data.empty:
+        print(f"    Mean DRF: {pds_data['mean_drf'].mean():.3f}")
+        print(f"    Range across datasets: {pds_data['mean_drf'].min():.3f} - {pds_data['mean_drf'].max():.3f}")
 
 print("\n" + "="*70)
 print("Analysis complete! Check the results/ directory for saved outputs.")

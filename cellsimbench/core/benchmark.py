@@ -24,7 +24,7 @@ from .model_runner import ModelRunner
 from .metrics_engine import MetricsEngine
 from .baseline_runner import BaselineRunner
 from .plotting_engine import PlottingEngine
-from .gpu_utils import get_available_gpus, calculate_gpu_assignment
+from .gpu_utils import get_available_gpus, calculate_gpu_assignment, calculate_exclusive_gpu_assignment
 
 log = logging.getLogger(__name__)
 
@@ -152,10 +152,12 @@ class BenchmarkRunner:
         
         # GPU assignment  
         available_gpus = get_available_gpus()
-        gpu_assignment = calculate_gpu_assignment(fold_indices, available_gpus)
-        
-        # Use as many workers as folds (GPUs will be assigned round-robin)
-        max_workers = len(fold_indices)
+
+        if getattr(self.config, 'exclusive_gpu', False):
+            gpu_assignment, max_workers = calculate_exclusive_gpu_assignment(fold_indices, available_gpus)
+        else:
+            gpu_assignment = calculate_gpu_assignment(fold_indices, available_gpus)
+            max_workers = len(fold_indices)
         
         # Limit parallelism if requested by user
         max_parallel = getattr(self.config.execution, 'max_parallel_folds', None)
@@ -664,9 +666,10 @@ class BenchmarkRunner:
     
     def _calculate_all_metrics(self, all_predictions: Dict[str, sc.AnnData], split_name: str, output_dir: Path) -> Dict[str, Any]:
         """Calculate metrics for all models."""
-        # Check if nir analysis should be run (default False)
+        # Check if nir/gsea analysis should be run (default False)
         run_nir = getattr(self.config, 'run_nir_analysis', False)
-        metrics_engine = MetricsEngine(self.data_manager, run_nir=run_nir)
+        run_gsea = getattr(self.config, 'run_gsea_analysis', False)
+        metrics_engine = MetricsEngine(self.data_manager, run_nir=run_nir, run_gsea=run_gsea)
         
         # Handle aggregated_folds special case
         if split_name == 'aggregated_folds':
@@ -696,14 +699,24 @@ class BenchmarkRunner:
         # Convert AnnData predictions to DataFrame format for metrics engine
         ground_truth_df, ground_truth_deltas = self._extract_dataframes_and_deltas(ground_truth_adata)
         
-        # Create nir cache directory if running nir analysis
+        # Create cache directories for expensive metrics
         # Use a persistent location (not timestamped) so cache is reused across runs
+        dataset_name = self.config.dataset.name
         nir_cache_dir = None
+        pds_cache_dir = None
         if run_nir:
-            dataset_name = self.config.dataset.name
             nir_cache_dir = Path(f"outputs/.nir_cache/{dataset_name}")
+            pds_cache_dir = Path(f"outputs/.pds_cache/{dataset_name}")
             nir_cache_dir.mkdir(exist_ok=True, parents=True)
+            pds_cache_dir.mkdir(exist_ok=True, parents=True)
             log.info(f"nir analysis enabled - using cache directory: {nir_cache_dir}")
+            log.info(f"pds analysis enabled - using cache directory: {pds_cache_dir}")
+        
+        gsea_cache_dir = None
+        if run_gsea:
+            gsea_cache_dir = Path(f"outputs/.gsea_cache/{dataset_name}")
+            gsea_cache_dir.mkdir(exist_ok=True, parents=True)
+            log.info(f"GSEA analysis enabled - using cache directory: {gsea_cache_dir}")
         
         for model_name, predictions_adata in all_predictions.items():
             if model_name == 'ground_truth':
@@ -716,9 +729,17 @@ class BenchmarkRunner:
             
             # Check for cached nir results if enabled
             cached_nir_scores = None
-            if run_nir and nir_cache_dir:
-                cached_nir_scores = self._load_cached_nir_scores(
-                    model_name, predictions_df, ground_truth_df, nir_cache_dir
+            cached_pds_scores = None
+            if run_nir and nir_cache_dir and pds_cache_dir:
+                cached_nir_scores, cached_pds_scores = self._load_cached_nir_scores(
+                    model_name, predictions_df, ground_truth_df, nir_cache_dir, pds_cache_dir
+                )
+            
+            # Check for cached GSEA results if enabled
+            cached_gsea_scores = None
+            if run_gsea and gsea_cache_dir:
+                cached_gsea_scores = self._load_cached_gsea_scores(
+                    model_name, predictions_df, ground_truth_df, gsea_cache_dir
                 )
             
             # Calculate metrics using new format
@@ -727,14 +748,23 @@ class BenchmarkRunner:
                 predictions_deltas, 
                 ground_truth_df,
                 ground_truth_deltas,
-                cached_nir_scores=cached_nir_scores
+                cached_nir_scores=cached_nir_scores,
+                cached_pds_scores=cached_pds_scores,
+                cached_gsea_scores=cached_gsea_scores
             )
             
             # Cache nir scores for future runs if we calculated them
             if run_nir and nir_cache_dir and cached_nir_scores is None:
                 self._save_nir_scores_to_cache(
                     model_name, predictions_df, ground_truth_df, 
-                    model_metrics.get('nir', {}), nir_cache_dir
+                    model_metrics.get('nir', {}), model_metrics.get('pds', {}), nir_cache_dir, pds_cache_dir
+                )
+            
+            # Cache GSEA scores for future runs if we calculated them
+            if run_gsea and gsea_cache_dir and cached_gsea_scores is None:
+                self._save_gsea_scores_to_cache(
+                    model_name, predictions_df, ground_truth_df,
+                    model_metrics['pathway_recovery_deltapert'], gsea_cache_dir
                 )
             
             model_summary = self._calculate_summary_stats(model_metrics)
@@ -806,8 +836,8 @@ class BenchmarkRunner:
         max_model_name_len = max(len(name) for name in display_models.keys())
         model_col_width = max(max_model_name_len + 2, len("Model") + 2)  # At least as wide as "Model" header
         
-        # Calculate total table width for ALL metrics (added 3 nir columns)
-        col_widths = [model_col_width, 8, 8, 10, 12, 10, 12, 10, 12, 10, 12, 10, 10, 9, 12, 12]  # All column widths
+        # Calculate total table width for ALL metrics
+        col_widths = [model_col_width, 8, 8, 8, 8, 8, 8, 10, 12, 10, 12, 10, 12, 10, 12, 10, 10, 9, 9, 10, 10]  # All column widths
         total_width = sum(col_widths) + len(col_widths) - 1  # +spaces between columns
         
         print("\n" + "="*(total_width))
@@ -815,7 +845,7 @@ class BenchmarkRunner:
         print("="*(total_width+2))
         
         # Header with ALL metrics
-        print(f"{'Model':<{model_col_width}} {'MSE':<8} {'WMSE':<8} {'rΔ Ctrl':<10} {'rΔ Ctrl DEG':<12} {'rΔ Pert':<10} {'rΔ Pert DEG':<12} {'R²Δ Ctrl':<10} {'R²Δ Ctrl DEG':<12} {'R²Δ Pert':<10} {'R²Δ Pert DEG':<12} {'WR²Δ Ctrl':<10} {'WR²Δ Pert':<10} {'NIR':<9}")
+        print(f"{'Model':<{model_col_width}} {'MSE':<8} {'MSE_D':<8} {'WMSE':<8} {'MAE':<8} {'MAE_D':<8} {'WMAE':<8} {'rΔC':<10} {'rΔC DEG':<12} {'rΔP':<10} {'rΔP DEG':<12} {'R²ΔC':<10} {'R²ΔC DEG':<12} {'R²ΔP':<10} {'R²ΔP DEG':<12} {'WR²ΔC':<10} {'WR²ΔP':<10} {'NIR':<9} {'PDS':<9} {'DEGrΔP':<10} {'PWYrΔP':<10}")
         print("-" * total_width)
         
         # Model rows
@@ -825,7 +855,12 @@ class BenchmarkRunner:
             
             # Get mean values for display - ALL metrics
             mse = stats.get('mse_mean', float('nan'))
+            mse_degs = stats.get('mse_degs_mean', float('nan'))
             wmse = stats.get('wmse_mean', float('nan'))
+            mae = stats.get('mae_mean', float('nan'))
+            mae_degs = stats.get('mae_degs_mean', float('nan'))
+            wmae = stats.get('wmae_mean', float('nan'))
+
             pearson_deltactrl = stats.get('pearson_deltactrl_mean', float('nan'))
             pearson_deltactrl_degs = stats.get('pearson_deltactrl_degs_mean', float('nan'))
             pearson_deltapert = stats.get('pearson_deltapert_mean', float('nan'))
@@ -837,25 +872,35 @@ class BenchmarkRunner:
             weighted_r2_deltactrl = stats.get('weighted_r2_deltactrl_mean', float('nan'))
             weighted_r2_deltapert = stats.get('weighted_r2_deltapert_mean', float('nan'))
             nir = stats.get('nir_mean', float('nan'))
+            pds = stats.get('pds_mean', float('nan'))
+            deg_recovery_deltapert = stats.get('deg_recovery_deltapert_mean', float('nan'))
+            pathway_recovery_deltapert = stats.get('pathway_recovery_deltapert_mean', float('nan'))
             
             # Store for ranking (using control-based DEGs metric)
             model_scores[model_name] = {
+                'mse': mse,
+                'mse_degs': mse_degs,
+                'wmse': wmse,
+                'mae': mae,
+                'mae_degs': mae_degs,
+                'wmae': wmae,
+                'pearson_deltactrl': pearson_deltactrl,
                 'pearson_deltactrl_degs': pearson_deltactrl_degs,
+                'pearson_deltapert': pearson_deltapert,
                 'pearson_deltapert_degs': pearson_deltapert_degs,
+                'r2_deltactrl': r2_deltactrl,
                 'r2_deltactrl_degs': r2_deltactrl_degs,
+                'r2_deltapert': r2_deltapert,
                 'r2_deltapert_degs': r2_deltapert_degs,
                 'weighted_r2_deltactrl': weighted_r2_deltactrl,
                 'weighted_r2_deltapert': weighted_r2_deltapert,
-                'mse': mse,
-                'wmse': wmse,
-                'pearson_deltactrl': pearson_deltactrl,
-                'pearson_deltapert': pearson_deltapert,
-                'r2_deltactrl': r2_deltactrl,
-                'r2_deltapert': r2_deltapert,
                 'nir': nir,
+                'pds': pds,
+                'deg_recovery_deltapert': deg_recovery_deltapert,
+                'pathway_recovery_deltapert': pathway_recovery_deltapert,
             }
             
-            print(f"{model_name:<{model_col_width}} {mse:<8.4f} {wmse:<8.4f} {pearson_deltactrl:<10.4f} {pearson_deltactrl_degs:<12.4f} {pearson_deltapert:<10.4f} {pearson_deltapert_degs:<12.4f} {r2_deltactrl:<10.4f} {r2_deltactrl_degs:<12.4f} {r2_deltapert:<10.4f} {r2_deltapert_degs:<12.4f} {weighted_r2_deltactrl:<10.4f} {weighted_r2_deltapert:<10.4f} {nir:<9.4f}")
+            print(f"{model_name:<{model_col_width}} {mse:<8.4f} {mse_degs:<8.4f} {wmse:<8.4f} {mae:<8.4f} {mae_degs:<8.4f} {wmae:<8.4f} {pearson_deltactrl:<10.4f} {pearson_deltactrl_degs:<12.4f} {pearson_deltapert:<10.4f} {pearson_deltapert_degs:<12.4f} {r2_deltactrl:<10.4f} {r2_deltactrl_degs:<12.4f} {r2_deltapert:<10.4f} {r2_deltapert_degs:<12.4f} {weighted_r2_deltactrl:<10.4f} {weighted_r2_deltapert:<10.4f} {nir:<9.4f} {pds:<9.4f} {deg_recovery_deltapert:<10.4f} {pathway_recovery_deltapert:<10.4f}")
         
         # Find best model
         if model_scores:
@@ -948,7 +993,7 @@ class BenchmarkRunner:
     
     def _load_cached_nir_scores(
         self, model_name: str, predictions_df: pd.DataFrame, 
-        ground_truth_df: pd.DataFrame, cache_dir: Path
+        ground_truth_df: pd.DataFrame, nir_cache_dir: Path, pds_cache_dir: Path
     ) -> Optional[Dict[str, float]]:
         """Load cached nir scores if they exist and are valid."""
         import hashlib
@@ -961,24 +1006,39 @@ class BenchmarkRunner:
         pred_hash = hashlib.md5(json.dumps(pred_keys, sort_keys=True).encode()).hexdigest()[:12]
         gt_hash = hashlib.md5(json.dumps(gt_keys, sort_keys=True).encode()).hexdigest()[:12]
         cache_key = f"{model_name}_{pred_hash}_{gt_hash}"
-        cache_file = cache_dir / f"{cache_key}_nir.json"
+        cache_file_nir = nir_cache_dir / f"{cache_key}_nir.json"
+        cache_file_pds = pds_cache_dir / f"{cache_key}_pds.json"
         
-        if cache_file.exists():
+        if cache_file_nir.exists():
             try:
-                with open(cache_file, 'r') as f:
-                    cached_scores = json.load(f)
-                log.info(f"  ✓ Loaded cached nir scores for {model_name} from {cache_file.name}")
-                return cached_scores
+                with open(cache_file_nir, 'r') as f:
+                    cached_nir_scores = json.load(f)
+                log.info(f"  ✓ Loaded cached nir scores for {model_name} from {cache_file_nir.name}")
             except Exception as e:
                 log.warning(f"  Failed to load cached nir scores: {e}")
-                return None
+                return None, None
+        else:
+            log.info(f"  No cached nir scores found for {model_name}, will calculate")
+            return None, None
+
+        if cache_file_pds.exists():
+            try:
+                with open(cache_file_pds, 'r') as f:
+                    cached_pds_scores = json.load(f)
+                log.info(f"  ✓ Loaded cached pds scores for {model_name} from {cache_file_pds.name}")
+            except Exception as e:
+                log.warning(f"  Failed to load cached pds scores: {e}")
+                return None, None
+        else:
+            log.info(f"  No cached nir scores found for {model_name}, will calculate")
+            return None, None
         
         log.info(f"  No cached nir scores found for {model_name}, will calculate")
-        return None
+        return cached_nir_scores, cached_pds_scores
     
     def _save_nir_scores_to_cache(
         self, model_name: str, predictions_df: pd.DataFrame, 
-        ground_truth_df: pd.DataFrame, nir_scores: Dict[str, float], cache_dir: Path
+        ground_truth_df: pd.DataFrame, nir_scores: Dict[str, float], pds_scores: Dict[str, float], nir_cache_dir: Path, pds_cache_dir: Path
     ) -> None:
         """Save nir scores to cache for future runs."""
         import hashlib
@@ -990,16 +1050,71 @@ class BenchmarkRunner:
         pred_hash = hashlib.md5(json.dumps(pred_keys, sort_keys=True).encode()).hexdigest()[:12]
         gt_hash = hashlib.md5(json.dumps(gt_keys, sort_keys=True).encode()).hexdigest()[:12]
         cache_key = f"{model_name}_{pred_hash}_{gt_hash}"
-        cache_file = cache_dir / f"{cache_key}_nir.json"
+        cache_file_nir = nir_cache_dir / f"{cache_key}_nir.json"
+        cache_file_pds = pds_cache_dir / f"{cache_key}_pds.json"
+        
+        try:
+            with open(cache_file_nir, 'w') as f:
+                json.dump(nir_scores, f, indent=2)
+            log.info(f"  ✓ Saved nir scores to cache: {cache_file_nir.name}")
+        except Exception as e:
+            log.warning(f"  Failed to save nir scores to cache: {e}")
+        try:
+            with open(cache_file_pds, 'w') as f:
+                json.dump(pds_scores, f, indent=2)
+            log.info(f"  ✓ Saved pds scores to cache: {cache_file_pds.name}")
+        except Exception as e:
+            log.warning(f"  Failed to save pds scores to cache: {e}")
+
+    def _load_cached_gsea_scores(
+        self, model_name: str, predictions_df: pd.DataFrame,
+        ground_truth_df: pd.DataFrame, gsea_cache_dir: Path
+    ) -> Optional[Dict[str, float]]:
+        """Load cached GSEA pathway recovery scores if they exist and are valid."""
+        import hashlib
+        
+        pred_keys = sorted(predictions_df.index.tolist())
+        gt_keys = sorted(ground_truth_df.index.tolist())
+        
+        pred_hash = hashlib.md5(json.dumps(pred_keys, sort_keys=True).encode()).hexdigest()[:12]
+        gt_hash = hashlib.md5(json.dumps(gt_keys, sort_keys=True).encode()).hexdigest()[:12]
+        cache_key = f"{model_name}_{pred_hash}_{gt_hash}"
+        cache_file = gsea_cache_dir / f"{cache_key}_gsea.json"
+        
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    cached_gsea_scores = json.load(f)
+                log.info(f"  ✓ Loaded cached GSEA scores for {model_name} from {cache_file.name}")
+                return cached_gsea_scores
+            except Exception as e:
+                log.warning(f"  Failed to load cached GSEA scores: {e}")
+                return None
+        else:
+            log.info(f"  No cached GSEA scores found for {model_name}, will calculate")
+            return None
+
+    def _save_gsea_scores_to_cache(
+        self, model_name: str, predictions_df: pd.DataFrame,
+        ground_truth_df: pd.DataFrame, gsea_scores: Dict[str, float], gsea_cache_dir: Path
+    ) -> None:
+        """Save GSEA pathway recovery scores to cache for future runs."""
+        import hashlib
+        
+        pred_keys = sorted(predictions_df.index.tolist())
+        gt_keys = sorted(ground_truth_df.index.tolist())
+        
+        pred_hash = hashlib.md5(json.dumps(pred_keys, sort_keys=True).encode()).hexdigest()[:12]
+        gt_hash = hashlib.md5(json.dumps(gt_keys, sort_keys=True).encode()).hexdigest()[:12]
+        cache_key = f"{model_name}_{pred_hash}_{gt_hash}"
+        cache_file = gsea_cache_dir / f"{cache_key}_gsea.json"
         
         try:
             with open(cache_file, 'w') as f:
-                json.dump(nir_scores, f, indent=2)
-            log.info(f"  ✓ Saved nir scores to cache: {cache_file.name}")
+                json.dump(gsea_scores, f, indent=2)
+            log.info(f"  ✓ Saved GSEA scores to cache: {cache_file.name}")
         except Exception as e:
-            log.warning(f"  Failed to save nir scores to cache: {e}")
-
-            
+            log.warning(f"  Failed to save GSEA scores to cache: {e}")
     
     def _save_results(self, results: Dict[str, Any], output_dir: Path):
         """Save benchmark results to files."""

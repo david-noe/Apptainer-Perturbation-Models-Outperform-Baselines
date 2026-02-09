@@ -10,10 +10,13 @@ __pycache__
 data/scGPT_CP/
 data/scGPT_human/
 data/save
+tmp
 analyses/calibration/baseline_outputs/
 *.pt
 outputs
 *.png
+migrate_cache.sh
+docker/cellflow/ref/CellFlow/
 *.json
 *.zip
 *.fa

@@ -10,5 +10,6 @@ models:
   - fmlp_geneformer
   - fmlp_scgpt
   - fmlp_genept
+  - cellflow
 
 description: "Compare different perturbation response models" 

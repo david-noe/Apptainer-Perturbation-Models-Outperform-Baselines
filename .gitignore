@@ -19,6 +19,7 @@ migrate_cache.sh
 docker/cellflow/ref/CellFlow/
 *.json
 *.zip
+*.tex
 *.fa
 *.xlsx
 *sggm*

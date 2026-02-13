@@ -29,18 +29,11 @@ import multiprocessing
 # Metric display names and whether higher is better
 METRIC_INFO = {
     'mse': {'display': 'MSE', 'higher_better': False},
-    'mse_deltactrl': {'display': 'MSE(Δ Ctrl)', 'higher_better': False},
     'mse_degs': {'display': 'MSE(DEGs)', 'higher_better': False},
-    'mse_deltactrl_degs': {'display': 'MSE(Δ Ctrl DEG)', 'higher_better': False},
     'wmse': {'display': 'WMSE', 'higher_better': False},
-    'wmse_deltactrl': {'display': 'WMSE(Δ Ctrl)', 'higher_better': False},
     'mae': {'display': 'MAE', 'higher_better': False},
-    'mae_deltactrl': {'display': 'MAE(Δ Ctrl)', 'higher_better': False},
     'mae_degs': {'display': 'MAE(DEGs)', 'higher_better': False},
-    'mae_deltactrl_degs': {'display': 'MAE(Δ Ctrl DEG)', 'higher_better': False},
-    'wmae': {'display': 'Weighted MAE', 'higher_better': False},
-    'wmae_deltactrl': {'display': 'Weighted MAE(Δ Ctrl)', 'higher_better': False},
-    'pds': {'display': 'PDS', 'higher_better': True},
+    'wmae': {'display': 'WMAE', 'higher_better': False},
     'pearson_deltactrl': {'display': 'Pearson(Δ Ctrl)', 'higher_better': True},
     'pearson_deltactrl_degs': {'display': 'Pearson(Δ Ctrl DEG)', 'higher_better': True},
     'pearson_deltapert': {'display': 'Pearson(Δ Pert)', 'higher_better': True},
@@ -52,7 +45,23 @@ METRIC_INFO = {
     'weighted_r2_deltactrl': {'display': 'WR²(Δ Ctrl)', 'higher_better': True},
     'weighted_r2_deltapert': {'display': 'WR²(Δ Pert)', 'higher_better': True},
     'nir': {'display': 'NIR', 'higher_better': True},
+    'pds': {'display': 'PDS', 'higher_better': True},
+    'deg_recovery_deltapert': {'display': 'DEG Recovery(Δ Pert)', 'higher_better': True},
+    'pathway_recovery_deltapert': {'display': 'GSRS(Δ Pert)', 'higher_better': True},
+    'knn_jaccard_deltapert': {'display': 'KNN Jaccard(Δ Pert)', 'higher_better': True},
 }
+
+
+def is_deg_metric(metric_name: str) -> bool:
+    """Check if a metric is DEG-based (requires filtered data, not comparable to non-DEG metrics)."""
+    return 'deg' in metric_name.lower()
+
+
+def get_metric_subsets() -> dict:
+    """Return DEG and non-DEG metric subsets."""
+    non_deg = [m for m in METRIC_INFO if not is_deg_metric(m)]
+    deg = [m for m in METRIC_INFO if is_deg_metric(m)]
+    return {'non_deg': non_deg, 'deg': deg}
 
 
 def format_model_name(model_name: str) -> str:
@@ -77,6 +86,7 @@ def format_model_name(model_name: str) -> str:
         'fmlp_geneformer': 'fMLP-Geneformer',
         'fmlp_scgpt': 'fMLP-scGPT',
         'gears': 'GEARS',
+        'cellflow': 'CellFlow',
     }
     
     return name_map.get(model_name, model_name)
@@ -99,13 +109,14 @@ def load_and_process_data(csv_path: Path, exclude_baselines: bool = False) -> pd
     return summary
 
 
-def create_mean_heatmap(summary_df: pd.DataFrame, output_path: Path, figsize=(16, 10)):
+def create_mean_heatmap(summary_df: pd.DataFrame, output_path: Path, metric_subset: list = None, figsize=(16, 10)):
     """Create heatmap of model × metric with annotated mean values."""
     # Pivot to get model × metric matrix
     pivot_df = summary_df.pivot(index='model', columns='metric', values='mean')
     
-    # Reorder columns to match METRIC_INFO order
-    available_metrics = [m for m in METRIC_INFO.keys() if m in pivot_df.columns]
+    # Reorder columns to match METRIC_INFO order, filtered by subset if provided
+    source_metrics = metric_subset if metric_subset is not None else list(METRIC_INFO.keys())
+    available_metrics = [m for m in source_metrics if m in pivot_df.columns]
     pivot_df = pivot_df[available_metrics]
     
     # Sort rows (models) by mean performance across all metrics
@@ -194,13 +205,14 @@ def create_mean_heatmap(summary_df: pd.DataFrame, output_path: Path, figsize=(16
     print(f"✓ Saved mean heatmap to: {output_path}")
 
 
-def create_zscore_heatmap(summary_df: pd.DataFrame, output_path: Path, figsize=(16, 10)):
+def create_zscore_heatmap(summary_df: pd.DataFrame, output_path: Path, metric_subset: list = None, figsize=(16, 10)):
     """Create heatmap showing performance relative to dataset_mean baseline."""
     # Pivot to get model × metric matrix
     pivot_df = summary_df.pivot(index='model', columns='metric', values='mean')
     
-    # Reorder columns to match METRIC_INFO order
-    available_metrics = [m for m in METRIC_INFO.keys() if m in pivot_df.columns]
+    # Reorder columns to match METRIC_INFO order, filtered by subset if provided
+    source_metrics = metric_subset if metric_subset is not None else list(METRIC_INFO.keys())
+    available_metrics = [m for m in source_metrics if m in pivot_df.columns]
     pivot_df = pivot_df[available_metrics]
     
     # Determine which baseline to use for each metric
@@ -328,14 +340,15 @@ def create_zscore_heatmap(summary_df: pd.DataFrame, output_path: Path, figsize=(
     print(f"✓ Saved relative performance heatmap to: {output_path}")
 
 
-def create_summary_table(summary_df: pd.DataFrame, output_path: Path):
+def create_summary_table(summary_df: pd.DataFrame, output_path: Path, metric_subset: list = None):
     """Create table with mean ± SEM for all models and metrics."""
     # Pivot to get model × metric matrix for mean
     mean_df = summary_df.pivot(index='model', columns='metric', values='mean')
     sem_df = summary_df.pivot(index='model', columns='metric', values='sem')
     
-    # Reorder columns to match METRIC_INFO order
-    available_metrics = [m for m in METRIC_INFO.keys() if m in mean_df.columns]
+    # Reorder columns to match METRIC_INFO order, filtered by subset if provided
+    source_metrics = metric_subset if metric_subset is not None else list(METRIC_INFO.keys())
+    available_metrics = [m for m in source_metrics if m in mean_df.columns]
     mean_df = mean_df[available_metrics]
     sem_df = sem_df[available_metrics]
     
@@ -346,8 +359,8 @@ def create_summary_table(summary_df: pd.DataFrame, output_path: Path):
         for metric in available_metrics:
             mean_val = mean_df.loc[model, metric]
             sem_val = sem_df.loc[model, metric]
-            # Format as "mean ± sem"
-            row[METRIC_INFO[metric]['display']] = f"{mean_val:.4f} ± {sem_val:.4f}"
+            # Format as "mean ± sem" (8 decimal places for downstream precision)
+            row[METRIC_INFO[metric]['display']] = f"{mean_val:.8f} ± {sem_val:.8f}"
         table_data.append(row)
     
     table_df = pd.DataFrame(table_data)
@@ -396,14 +409,15 @@ def create_summary_table(summary_df: pd.DataFrame, output_path: Path):
     print(f"✓ Saved summary table figure to: {table_fig_path}")
 
 
-def create_statistical_comparison_heatmap(csv_path: Path, output_path: Path, dataset_name: str, figsize=(20, 10)):
+def create_statistical_comparison_heatmap(csv_path: Path, output_path: Path, dataset_name: str, metric_subset: list = None, figsize=(20, 10)):
     """Create heatmap showing statistical test results vs. appropriate baseline."""
     # Load full data (not summary)
     df = pd.read_csv(csv_path)
     
-    # Get unique models and metrics
+    # Get unique models and metrics, filtered by subset if provided
+    source_metrics = metric_subset if metric_subset is not None else list(METRIC_INFO.keys())
     models = df['model'].unique()
-    metrics = [m for m in METRIC_INFO.keys() if m in df['metric'].unique()]
+    metrics = [m for m in source_metrics if m in df['metric'].unique()]
     
     # Initialize matrices for test statistics and p-values
     # Initialize with NaN instead of leaving uninitialized
@@ -656,7 +670,7 @@ def create_stripplot_for_metric(args):
             if len(merged) >= 3:
                 try:
                     # One-sided paired t-test
-                    if METRIC_INFO.get(metric, {}).get('higher_better', True):
+                    if METRIC_INFO[metric]['higher_better']:
                         # Test if model > baseline
                         t_stat, p_val = ttest_rel(
                             merged['value_model'],
@@ -740,10 +754,10 @@ def create_stripplot_for_metric(args):
                    fontweight='bold')
     
     # Customize plot
-    metric_display = METRIC_INFO.get(metric, {}).get('display', metric)
+    metric_display = METRIC_INFO[metric]['display']
     
     # Add directional arrow in axis label
-    direction_arrow = '↓' if not METRIC_INFO.get(metric, {}).get('higher_better', True) else '↑'
+    direction_arrow = '↓' if not METRIC_INFO[metric]['higher_better'] else '↑'
     
     # Apply log scale for MSE/WMSE in log version
     if use_log_scale and metric.lower() in ['mse', 'wmse']:
@@ -967,7 +981,7 @@ def create_forest_plot_for_metric(args):
         
         if len(merged) >= 3:
             try:
-                if METRIC_INFO.get(metric, {}).get('higher_better', True):
+                if METRIC_INFO[metric]['higher_better']:
                     t_stat, p_val = ttest_rel(
                         merged['value_model'],
                         merged['value_baseline'],
@@ -990,7 +1004,7 @@ def create_forest_plot_for_metric(args):
     # Sort models by mean difference
     # For "higher is better": positive diff is better (sort descending)
     # For "lower is better": negative diff is better (sort ascending)
-    if METRIC_INFO.get(metric, {}).get('higher_better', True):
+    if METRIC_INFO[metric]['higher_better']:
         sorted_models = sorted(model_differences.items(), 
                               key=lambda x: x[1]['mean'], 
                               reverse=True)
@@ -1090,8 +1104,8 @@ def create_forest_plot_for_metric(args):
                            fontsize=10)
     
     # Labels and title
-    metric_display = METRIC_INFO.get(metric, {}).get('display', metric)
-    direction_arrow = '↓' if not METRIC_INFO.get(metric, {}).get('higher_better', True) else '↑'
+    metric_display = METRIC_INFO[metric]['display']
+    direction_arrow = '↓' if not METRIC_INFO[metric]['higher_better'] else '↑'
     baseline_display = format_model_name(null_baseline).lower()
     
     ax.set_xlabel(f'Δ metric (prediction - {baseline_display}) ({direction_arrow})', 
@@ -1250,7 +1264,7 @@ def create_aux_plot(df: pd.DataFrame, metric: str, baseline_model: str,
     if len(merged) >= 3:
         try:
             # One-sided t-test: is comparison model better than baseline?
-            if METRIC_INFO.get(metric, {}).get('higher_better', True):
+            if METRIC_INFO[metric]['higher_better']:
                 # Test if comparison > baseline
                 t_stat, p_val = ttest_rel(
                     merged['value_comparison'],
@@ -1325,8 +1339,8 @@ def create_aux_plot(df: pd.DataFrame, metric: str, baseline_model: str,
                fontsize=10)
     
     # Styling
-    metric_display = METRIC_INFO.get(metric, {}).get('display', metric)
-    direction_arrow = '↓' if not METRIC_INFO.get(metric, {}).get('higher_better', True) else '↑'
+    metric_display = METRIC_INFO[metric]['display']
+    direction_arrow = '↓' if not METRIC_INFO[metric]['higher_better'] else '↑'
     ax.set_title(f'{metric_display} in {dataset_name}',
                 fontsize=20, fontweight='bold', pad=25)
     ax.set_xlabel('', fontsize=16)
@@ -1435,7 +1449,7 @@ def create_aux_plot_expanded(df: pd.DataFrame, metric: str, models_to_plot: list
             
             if len(merged) >= 3:
                 try:
-                    if METRIC_INFO.get(metric, {}).get('higher_better', True):
+                    if METRIC_INFO[metric]['higher_better']:
                         t_stat, p_val = ttest_rel(
                             merged['value_model'],
                             merged['value_baseline'],
@@ -1490,8 +1504,8 @@ def create_aux_plot_expanded(df: pd.DataFrame, metric: str, models_to_plot: list
                    fontweight='bold')
     
     # Styling
-    metric_display = METRIC_INFO.get(metric, {}).get('display', metric)
-    direction_arrow = '↓' if not METRIC_INFO.get(metric, {}).get('higher_better', True) else '↑'
+    metric_display = METRIC_INFO[metric]['display']
+    direction_arrow = '↓' if not METRIC_INFO[metric]['higher_better'] else '↑'
     ax.set_title(f'{metric_display} in {dataset_name}',
                 fontsize=20, fontweight='bold', pad=25)
     ax.set_xlabel('', fontsize=16)
@@ -1737,9 +1751,9 @@ def create_baseline_comparison_scatter(df: pd.DataFrame, output_dir: Path, datas
     print(f"  ✓ Saved {filename}")
 
 
-def create_latex_tables(csv_path: Path, mean_all_path: Path, mean_nodeg_path: Path,
-                        ttest_all_path: Path, ttest_nodeg_path: Path, dataset_name: str):
-    """Create LaTeX tables: two versions each for means and t-tests (with/without DEG metrics)."""
+def create_latex_tables(csv_path: Path, mean_nondeg_path: Path, mean_deg_path: Path,
+                        ttest_nondeg_path: Path, ttest_deg_path: Path, dataset_name: str):
+    """Create LaTeX tables: two versions each for means and t-tests (non-DEG and DEG metrics)."""
     df = pd.read_csv(csv_path)
     
     # Get models and metrics
@@ -1819,26 +1833,25 @@ def create_latex_tables(csv_path: Path, mean_all_path: Path, mean_nodeg_path: Pa
     # Positive controls (don't bold if they win)
     positive_controls = ['technical_duplicate', 'interpolated_duplicate']
     
-    # Create all four table versions
-    # Version 1: Means with all metrics
-    metrics_all = all_metrics
-    create_single_latex_table(mean_all_path, summary, trained_models, baselines, metrics_all,
-                             positive_controls, dataset_name, "mean", "all")
+    # Split metrics into non-DEG and DEG subsets
+    subsets = get_metric_subsets()
+    metrics_nondeg = [m for m in all_metrics if m in subsets['non_deg']]
+    metrics_deg = [m for m in all_metrics if m in subsets['deg']]
     
-    # Version 2: Means without DEG metrics
-    metrics_nodeg = [m for m in all_metrics if '_degs' not in m]
-    create_single_latex_table(mean_nodeg_path, summary, trained_models, baselines, metrics_nodeg,
-                             positive_controls, dataset_name, "mean", "nodeg")
+    # Create four table versions: means/ttests × non-DEG/DEG
+    create_single_latex_table(mean_nondeg_path, summary, trained_models, baselines, metrics_nondeg,
+                             positive_controls, dataset_name, "mean", "nondeg")
     
-    # Version 3: T-tests with all metrics  
-    create_single_latex_table(ttest_all_path, summary, trained_models, baselines, metrics_all,
-                             positive_controls, dataset_name, "ttest", "all", t_stats, p_values)
+    create_single_latex_table(mean_deg_path, summary, trained_models, baselines, metrics_deg,
+                             positive_controls, dataset_name, "mean", "deg")
     
-    # Version 4: T-tests without DEG metrics
-    create_single_latex_table(ttest_nodeg_path, summary, trained_models, baselines, metrics_nodeg,
-                             positive_controls, dataset_name, "ttest", "nodeg", t_stats, p_values)
+    create_single_latex_table(ttest_nondeg_path, summary, trained_models, baselines, metrics_nondeg,
+                             positive_controls, dataset_name, "ttest", "nondeg", t_stats, p_values)
     
-    print(f"✓ Saved LaTeX tables to: {mean_all_path.parent}")
+    create_single_latex_table(ttest_deg_path, summary, trained_models, baselines, metrics_deg,
+                             positive_controls, dataset_name, "ttest", "deg", t_stats, p_values)
+    
+    print(f"✓ Saved LaTeX tables to: {mean_nondeg_path.parent}")
 
 
 def create_single_latex_table(output_path, summary, trained_models, baselines, metrics,
@@ -1851,7 +1864,7 @@ def create_single_latex_table(output_path, summary, trained_models, baselines, m
     lines.append("\\centering")
     
     table_name = "Mean performance ± SEM" if table_type == "mean" else "Statistical comparison vs baseline"
-    deg_suffix = " (all metrics)" if version == "all" else " (excluding DEG metrics)"
+    deg_suffix = " (non-DEG metrics)" if version == "nondeg" else " (DEG metrics)"
     lines.append(f"\\caption{{{table_name} for {dataset_name}{deg_suffix}.}}")
     lines.append(f"\\label{{tab:multimodel_{table_type}_{version}_{dataset_name}}}")
     lines.append("\\resizebox{\\textwidth}{!}{%")
@@ -2101,21 +2114,34 @@ def main():
     print("\nGenerating plots...")
     print("-" * 80)
     
-    # 1. Mean heatmap
-    mean_heatmap_path = output_dir / 'multimodel_summary_heatmap.png'
-    create_mean_heatmap(summary_df, mean_heatmap_path)
+    # Get DEG / non-DEG metric subsets
+    metric_subsets = get_metric_subsets()
+    non_deg_metrics = metric_subsets['non_deg']
+    deg_metrics = metric_subsets['deg']
     
-    # 2. Relative performance heatmap (vs. dataset_mean baseline)
-    relative_heatmap_path = output_dir / 'multimodel_relative_performance.png'
-    create_zscore_heatmap(summary_df, relative_heatmap_path)
+    # 1. Mean heatmaps (separate DEG and non-DEG)
+    create_mean_heatmap(summary_df, output_dir / 'multimodel_summary_heatmap_nondeg.png',
+                        metric_subset=non_deg_metrics)
+    create_mean_heatmap(summary_df, output_dir / 'multimodel_summary_heatmap_deg.png',
+                        metric_subset=deg_metrics)
     
-    # 3. Summary table
-    table_path = output_dir / 'multimodel_summary_table.csv'
-    create_summary_table(summary_df, table_path)
+    # 2. Relative performance heatmaps (separate DEG and non-DEG)
+    create_zscore_heatmap(summary_df, output_dir / 'multimodel_relative_performance_nondeg.png',
+                          metric_subset=non_deg_metrics)
+    create_zscore_heatmap(summary_df, output_dir / 'multimodel_relative_performance_deg.png',
+                          metric_subset=deg_metrics)
     
-    # 4. Statistical comparison heatmap
-    stats_heatmap_path = output_dir / 'multimodel_statistical_comparison.png'
-    create_statistical_comparison_heatmap(csv_path, stats_heatmap_path, dataset_name)
+    # 3. Summary tables (separate DEG and non-DEG)
+    create_summary_table(summary_df, output_dir / 'multimodel_summary_table_nondeg.csv',
+                         metric_subset=non_deg_metrics)
+    create_summary_table(summary_df, output_dir / 'multimodel_summary_table_deg.csv',
+                         metric_subset=deg_metrics)
+    
+    # 4. Statistical comparison heatmaps (separate DEG and non-DEG)
+    create_statistical_comparison_heatmap(csv_path, output_dir / 'multimodel_statistical_comparison_nondeg.png',
+                                          dataset_name, metric_subset=non_deg_metrics)
+    create_statistical_comparison_heatmap(csv_path, output_dir / 'multimodel_statistical_comparison_deg.png',
+                                          dataset_name, metric_subset=deg_metrics)
     
     # 5. Strip plots for all metrics (parallelized)
     create_all_stripplots(csv_path, output_dir, dataset_name)
@@ -2126,13 +2152,13 @@ def main():
     # 7. Auxiliary plots for paper
     create_auxiliary_plots(csv_path, output_dir, dataset_name)
     
-    # 8. LaTeX tables (four versions: means/ttests × with_deg/without_deg)
-    latex_mean_all_path = output_dir / 'multimodel_latex_table_means_all.tex'
-    latex_mean_nodeg_path = output_dir / 'multimodel_latex_table_means_nodeg.tex'
-    latex_ttest_all_path = output_dir / 'multimodel_latex_table_ttests_all.tex'
-    latex_ttest_nodeg_path = output_dir / 'multimodel_latex_table_ttests_nodeg.tex'
-    create_latex_tables(csv_path, latex_mean_all_path, latex_mean_nodeg_path,
-                       latex_ttest_all_path, latex_ttest_nodeg_path, dataset_name)
+    # 8. LaTeX tables (separate DEG and non-DEG, for both means and t-tests)
+    create_latex_tables(csv_path,
+                       output_dir / 'multimodel_latex_table_means_nondeg.tex',
+                       output_dir / 'multimodel_latex_table_means_deg.tex',
+                       output_dir / 'multimodel_latex_table_ttests_nondeg.tex',
+                       output_dir / 'multimodel_latex_table_ttests_deg.tex',
+                       dataset_name)
     
     print("\n" + "=" * 80)
     print("✅ All plots generated successfully!")

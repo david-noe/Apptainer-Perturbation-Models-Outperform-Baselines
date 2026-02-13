@@ -56,17 +56,19 @@ def _gsea_worker(args):
 
 class MetricsEngine:
 
-    def __init__(self, data_manager: DataManager, run_nir: bool = False, run_gsea: bool = False) -> None:
+    def __init__(self, data_manager: DataManager, run_nir: bool = False, run_gsea: bool = False, run_knn_graph: bool = False) -> None:
         """Initialize MetricsEngine with a DataManager instance.
         
         Args:
             data_manager: DataManager for accessing ground truth data and DEG weights.
             run_nir: Whether to run nir calculation (default False).
             run_gsea: Whether to run GSEA pathway recovery analysis (default False).
+            run_knn_graph: Whether to run KNN graph Jaccard similarity analysis (default False).
         """
         self.data_manager = data_manager
         self.run_nir = run_nir
         self.run_gsea = run_gsea
+        self.run_knn_graph = run_knn_graph
         self._hallmark_library = self._load_hallmark_library()
         
     def calculate_all_metrics(
@@ -78,6 +80,7 @@ class MetricsEngine:
         cached_nir_scores: Optional[Dict[str, float]] = None,
         cached_pds_scores: Optional[Dict[str, float]] = None,
         cached_gsea_scores: Optional[Dict[str, float]] = None,
+        cached_knn_jaccard_scores: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Dict[str, float]]:
 
         # Ensure predictions and ground truth have the same var_names
@@ -111,6 +114,16 @@ class MetricsEngine:
             nir_scores = {key: 0.0 for key in predictions.index}
             pds_scores = {key: 0.0 for key in predictions.index}
 
+        # Calculate KNN graph Jaccard scores (needs full dataset) - only if enabled
+        if cached_knn_jaccard_scores is not None:
+            knn_jaccard_scores = cached_knn_jaccard_scores
+        elif self.run_knn_graph:
+            knn_jaccard_scores = self._calculate_knn_jaccard_scores(
+                predictions_deltas['deltamean'], ground_truth_deltas['deltamean']
+            )
+        else:
+            knn_jaccard_scores = {key: 0.0 for key in predictions.index}
+
         # Get all covariate-condition pairs from DataFrame index
         cov_condition_pairs = [(key.split('_')[0], '_'.join(key.split('_')[1:])) 
                               for key in predictions.index]
@@ -138,9 +151,7 @@ class MetricsEngine:
             # Get DEG weights and mask using covariate and perturbation
             weights = self.data_manager.get_deg_weights(covariate_value, condition, gene_order=common_var_names)
             deg_mask = self.data_manager.get_deg_mask(covariate_value, condition, gene_order=common_var_names, topn=100)
-            # DEG directions and full significance mask (no topn) for DEG recovery metric
             deg_directions = self.data_manager.get_deg_directions(covariate_value, condition, gene_order=common_var_names)
-            deg_mask_all = self.data_manager.get_deg_mask(covariate_value, condition, gene_order=common_var_names)
             condition_metrics[cov_pert_key] = {
                 'mse': self._calculate_mse(pred_expression, truth_expression),
                 'mse_degs': self._calculate_mse(pred_expression[deg_mask], truth_expression[deg_mask]),
@@ -178,8 +189,11 @@ class MetricsEngine:
                 'nir': nir_scores[cov_pert_key] if cov_pert_key in nir_scores else np.nan,
                 'pds': pds_scores[cov_pert_key] if cov_pert_key in pds_scores else np.nan,
 
-                # DEG direction recovery metric (only vs dataset mean / pert baseline)
-                'deg_recovery_deltapert': self._calculate_deg_recovery(pred_deltas_mean, deg_directions, deg_mask_all),
+                # KNN graph Jaccard similarity metric
+                'knn_jaccard_deltapert': knn_jaccard_scores[cov_pert_key] if cov_pert_key in knn_jaccard_scores else np.nan,
+
+                # # DEG direction recovery metric (only vs dataset mean / pert baseline)
+                # 'deg_recovery_deltapert': self._calculate_deg_recovery(pred_deltas_mean, deg_directions, deg_mask),
             }
 
         # Phase 2: GSEA pathway recovery (use cached scores, compute in parallel, or skip)
@@ -464,3 +478,60 @@ class MetricsEngine:
                 # Average across all comparisons
                 nir_scores[pert_key] = np.mean(comparisons) if comparisons else 0.0
         return nir_scores 
+
+    def _calculate_knn_jaccard_scores(
+        self,
+        predictions_deltas_mean: pd.DataFrame,
+        ground_truth_deltas_mean: pd.DataFrame,
+        k: int = 20,
+    ) -> Dict[str, float]:
+        """Calculate KNN graph Jaccard similarity for all perturbations globally.
+        
+        Builds a K-nearest-neighbor graph on ground-truth delta-mean profiles and
+        another on predicted delta-mean profiles (across all perturbations globally).
+        For each perturbation, computes the Jaccard similarity between its neighbor
+        sets in the two graphs.
+        
+        Args:
+            predictions_deltas_mean: DataFrame of predicted delta-from-mean profiles
+                (cov_pert_key as index, genes as columns).
+            ground_truth_deltas_mean: DataFrame of ground-truth delta-from-mean profiles
+                (cov_pert_key as index, genes as columns).
+            k: Number of nearest neighbors (default 20).
+            
+        Returns:
+            Dict mapping cov_pert_key to Jaccard similarity score (0-1).
+        """
+        from scipy.spatial.distance import cdist
+
+        # Align to common perturbation keys
+        common_keys = predictions_deltas_mean.index.intersection(ground_truth_deltas_mean.index)
+        if len(common_keys) < 2:
+            print(f"KNN Jaccard: fewer than 2 common perturbation keys, skipping")
+            return {}
+
+        pred = predictions_deltas_mean.loc[common_keys]
+        truth = ground_truth_deltas_mean.loc[common_keys]
+
+        n = len(common_keys)
+        effective_k = min(k, n - 1)
+
+        # Compute pairwise distance matrices (each perturbation vs all others)
+        pred_dist = cdist(pred.values, pred.values, metric='euclidean')
+        truth_dist = cdist(truth.values, truth.values, metric='euclidean')
+
+        # For each perturbation, find K nearest neighbors (excluding self)
+        # argsort gives indices sorted by distance; index 0 is self (distance 0), so take [1:k+1]
+        pred_knn = np.argsort(pred_dist, axis=1)[:, 1:effective_k + 1]
+        truth_knn = np.argsort(truth_dist, axis=1)[:, 1:effective_k + 1]
+
+        # Compute per-perturbation Jaccard similarity of neighbor sets
+        knn_jaccard_scores = {}
+        for i, pert_key in tqdm(enumerate(common_keys), total=n, desc="Calculating KNN Jaccard"):
+            pred_neighbors = set(pred_knn[i])
+            truth_neighbors = set(truth_knn[i])
+            intersection = len(pred_neighbors & truth_neighbors)
+            union = len(pred_neighbors | truth_neighbors)
+            knn_jaccard_scores[pert_key] = intersection / union if union > 0 else 0.0
+
+        return knn_jaccard_scores

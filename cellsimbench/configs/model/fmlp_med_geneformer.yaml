@@ -1,0 +1,33 @@
+# @package model
+name: fmlp_med_geneformer
+type: docker
+description: "fMLP (med) with Geneformer embeddings"
+
+docker:
+  image: "cellsimbench/fmlp:latest"
+  memory: "max"
+  cpus: "max"
+  gpu: true
+
+# Model hyperparameters
+hyperparameters:
+  # Foundation model configuration
+  foundation_model: "geneformer"
+  embedding_key: "embeddings_geneformer"
+  
+  # Architecture parameters
+  latent_dim: 64
+  hidden_dim: 256
+  covariate_embedding_dim: 16
+  
+  # Training parameters
+  training_epochs: 100
+  batch_size: 256
+  learning_rate: 0.001
+  val_every: 10
+  
+  # DEG weighting
+  use_weights: false
+  
+  # Random seed
+  seed: 42

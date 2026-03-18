@@ -26,6 +26,10 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 
 
+# Module-level flag for fMLP size comparison display names
+FMLP_COMPARE_MODE = False
+
+
 # Metric display names and whether higher is better
 METRIC_INFO = {
     'mse': {'display': 'MSE', 'higher_better': False},
@@ -88,6 +92,27 @@ def format_model_name(model_name: str) -> str:
         'gears': 'GEARS',
         'cellflow': 'CellFlow',
     }
+    
+    # When comparing fMLP sizes, override with size-annotated names
+    if FMLP_COMPARE_MODE:
+        fmlp_compare_map = {
+            # Original (full)
+            'fmlp_esm2': 'fMLP-ESM2 (full)',
+            'fmlp_geneformer': 'fMLP-Geneformer (full)',
+            'fmlp_scgpt': 'fMLP-scGPT (full)',
+            'fmlp_genept': 'fMLP-GenePT (full)',
+            # Med
+            'fmlp_med_esm2': 'fMLP-ESM2 (med)',
+            'fmlp_med_geneformer': 'fMLP-Geneformer (med)',
+            'fmlp_med_scgpt': 'fMLP-scGPT (med)',
+            'fmlp_med_genept': 'fMLP-GenePT (med)',
+            # Small
+            'fmlp_small_esm2': 'fMLP-ESM2 (small)',
+            'fmlp_small_geneformer': 'fMLP-Geneformer (small)',
+            'fmlp_small_scgpt': 'fMLP-scGPT (small)',
+            'fmlp_small_genept': 'fMLP-GenePT (small)',
+        }
+        name_map.update(fmlp_compare_map)
     
     return name_map.get(model_name, model_name)
 
@@ -2063,8 +2088,17 @@ def main():
         action='store_true',
         help='Exclude baseline models from plots (default: include them as controls)'
     )
+    parser.add_argument(
+        '--fmlp-compare',
+        action='store_true',
+        help='Use fMLP size comparison display names: fmlp_esm2 -> fMLP-ESM2 (full), fmlp_med_esm2 -> fMLP-ESM2 (med), etc.'
+    )
     
     args = parser.parse_args()
+    
+    # Set module-level fMLP compare mode
+    global FMLP_COMPARE_MODE
+    FMLP_COMPARE_MODE = args.fmlp_compare
     
     # Load CSV
     csv_path = Path(args.csv_path)

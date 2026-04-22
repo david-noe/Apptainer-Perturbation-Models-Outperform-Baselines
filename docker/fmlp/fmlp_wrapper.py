@@ -774,7 +774,6 @@ class FMLPWrapper:
             seed=hyperparams['seed'],
             model_path=self.config['output_dir'],
             val_every=hyperparams['val_every'],
-
         )
         
         # Setup the model
@@ -817,7 +816,6 @@ class FMLPWrapper:
             learning_rate=hyperparams['learning_rate'],
             seed=hyperparams['seed'],
             val_every=hyperparams['val_every'],
-
         )
         
         # Load embeddings from adata

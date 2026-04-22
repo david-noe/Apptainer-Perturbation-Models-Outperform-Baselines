@@ -20,6 +20,7 @@ DATASETS=(
 
 # Maximum number of parallel jobs (adjust based on your system)
 MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS:-14}
+MAX_PARALLEL_JOBS=2
 
 # Set custom output directory
 OUTPUT_BASE_DIR="analyses/calibration/baseline_outputs"
@@ -43,6 +44,7 @@ run_dataset() {
         dataset=${dataset} \
         model=baselines \
         +run_nir_analysis=true \
+        +run_gsea_analysis=true \
         hydra.run.dir="${OUTPUT_BASE_DIR}/${dataset}/${timestamp}" \
         > "${log_file}" 2>&1
     
@@ -84,12 +86,12 @@ wait_for_job_slot() {
                 # Job has finished
                 wait $pid
                 exit_code=$?
-                dataset="${PID_DATASETS[$pid]}"
+                completed_dataset="${PID_DATASETS[$pid]}"
                 
                 if [ $exit_code -eq 0 ]; then
-                    SUCCESSFUL+=("$dataset")
+                    SUCCESSFUL+=("$completed_dataset")
                 else
-                    FAILED+=("$dataset")
+                    FAILED+=("$completed_dataset")
                 fi
                 
                 # Remove from tracking arrays

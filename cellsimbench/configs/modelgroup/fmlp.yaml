@@ -1,0 +1,18 @@
+# Multi-model benchmark configuration for comparing different model types
+# This references existing model configs without duplicating hyperparameters
+
+models:
+  - fmlp_esm2
+  - fmlp_med_esm2
+  - fmlp_small_esm2
+  - fmlp_geneformer
+  - fmlp_med_geneformer
+  - fmlp_small_geneformer
+  - fmlp_scgpt
+  - fmlp_med_scgpt
+  - fmlp_small_scgpt
+  - fmlp_genept
+  - fmlp_med_genept
+  - fmlp_small_genept
+
+description: "Compare different perturbation response models" 

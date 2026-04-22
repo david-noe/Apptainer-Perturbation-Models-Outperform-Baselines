@@ -180,6 +180,9 @@ ggsave("figures/fS1e_S6a.png", width = 6, height = 8, dpi = 300)
 ```{r fig.width=5, fig.height=3}
 metrics <- read.csv("per_perturbation_results.csv")
 
+# Remove downstream analysis metrics (handled separately)
+metrics <- metrics %>% filter(!metric %in% c("deg_recovery_deltapert", "pathway_recovery_deltapert"))
+
 # Classify metrics as "Main" or "DEG" based on whether they contain "_degs" suffix
 metrics$metric_type <- ifelse(grepl("_degs$", metrics$metric), "DEG", "Main")
 
@@ -304,17 +307,11 @@ metric_labels <- c(
   "nir"                    = "NIR",
   "pds"                    = "PDS",
   "mse"                    = "MSE",
-  "mse_deltactrl"          = "MSE \u0394 Ctrl",
   "mse_degs"               = "MSE DEGs",
-  "mse_deltactrl_degs"     = "MSE \u0394 Ctrl DEGs",
   "wmse"                   = "WMSE",
-  "wmse_deltactrl"         = "WMSE \u0394 Ctrl",
   "mae"                    = "MAE",
-  "mae_deltactrl"          = "MAE \u0394 Ctrl",
   "mae_degs"               = "MAE DEGs",
-  "mae_deltactrl_degs"     = "MAE \u0394 Ctrl DEGs",
-  "wmae"                   = "Weighted MAE",
-  "wmae_deltactrl"         = "Weighted MAE \u0394 Ctrl",
+  "wmae"                   = "WMAE",
   "pearson_deltactrl"      = "Pearson \u0394 Ctrl",
   "pearson_deltactrl_degs" = "Pearson \u0394 Ctrl DEGs",
   "r2_deltactrl"           = expression(R^2~"\u0394"~Ctrl),

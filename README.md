@@ -78,6 +78,9 @@ uv run cellsimbench benchmark model=fmlp_esm2 dataset=norman19
 # Enable NIR (Nearest In-distribution Reference) analysis (slow)
 uv run cellsimbench benchmark model=fmlp_esm2 dataset=norman19 +run_nir_analysis=true
 
+# Enable GSEA pathway recovery analysis (slow on first run, cached thereafter)
+uv run cellsimbench benchmark model=fmlp_esm2 dataset=norman19 +run_gsea_analysis=true
+
 # Exclusive GPU scheduling (one job per GPU at a time, remaining jobs wait)
 # Useful for GPU-hungry models like CellFlow that need the full GPU
 uv run cellsimbench train model=cellflow dataset=norman19 +exclusive_gpu=true

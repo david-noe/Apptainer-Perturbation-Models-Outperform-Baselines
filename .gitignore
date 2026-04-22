@@ -7,6 +7,9 @@ __pycache__
 *.pyz
 .env
 *.gz
+misc
+hvg_cache
+
 data/scGPT_CP/
 data/scGPT_human/
 data/save
@@ -19,6 +22,7 @@ migrate_cache.sh
 docker/cellflow/ref/CellFlow/
 *.json
 *.zip
+*.tex
 *.fa
 *.xlsx
 *sggm*

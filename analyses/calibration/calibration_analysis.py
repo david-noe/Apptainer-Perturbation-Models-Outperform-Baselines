@@ -56,20 +56,10 @@ DATASETS = [
 METRICS_CONFIG = {
     'mse': {'higher_better': False, 'perfect': 0.0},
     'mse_degs': {'higher_better': False, 'perfect': 0.0},
-    "mse_deltactrl": {'higher_better': False, 'perfect': 0.0},
-    "mse_deltactrl_degs": {'higher_better': False, 'perfect': 0.0},
-
     'wmse': {'higher_better': False, 'perfect': 0.0},
-    "wmse_deltactrl": {'higher_better': False, 'perfect': 0.0},
-
     'mae': {'higher_better': False, 'perfect': 0.0},
     'mae_degs': {'higher_better': False, 'perfect': 0.0},
-    "mae_deltactrl": {'higher_better': False, 'perfect': 0.0},
-    "mae_deltactrl_degs": {'higher_better': False, 'perfect': 0.0},
-
     'wmae': {'higher_better': False, 'perfect': 0.0},
-    "wmae_deltactrl": {'higher_better': False, 'perfect': 0.0},
-
 
     'pearson_deltactrl': {'higher_better': True, 'perfect': 1.0},
     'pearson_deltactrl_degs': {'higher_better': True, 'perfect': 1.0},
@@ -84,6 +74,7 @@ METRICS_CONFIG = {
 
     'nir': {'higher_better': True, 'perfect': 1.0},
     'pds': {'higher_better': True, 'perfect': 1.0},
+
 }
 
 print("Calibration analysis initialized")
@@ -433,7 +424,8 @@ if not SKIP_COMPUTATION:
         'pearson_deltapert_degs',
         'r2_deltapert',
         'r2_deltapert_degs',
-        'weighted_r2_deltapert'
+        'weighted_r2_deltapert',
+        'deg_recovery_deltapert',
     ]
     
     # Define metrics that should use mean baseline instead of control baseline for drf_ctrl

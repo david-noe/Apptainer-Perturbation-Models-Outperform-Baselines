@@ -666,10 +666,11 @@ class BenchmarkRunner:
     
     def _calculate_all_metrics(self, all_predictions: Dict[str, sc.AnnData], split_name: str, output_dir: Path) -> Dict[str, Any]:
         """Calculate metrics for all models."""
-        # Check if nir/gsea analysis should be run (default False)
+        # Check if nir/gsea/knn_graph analysis should be run (default False)
         run_nir = getattr(self.config, 'run_nir_analysis', False)
         run_gsea = getattr(self.config, 'run_gsea_analysis', False)
-        metrics_engine = MetricsEngine(self.data_manager, run_nir=run_nir, run_gsea=run_gsea)
+        run_knn_graph = getattr(self.config, 'run_knn_graph_analysis', False)
+        metrics_engine = MetricsEngine(self.data_manager, run_nir=run_nir, run_gsea=run_gsea, run_knn_graph=run_knn_graph)
         
         # Handle aggregated_folds special case
         if split_name == 'aggregated_folds':
@@ -718,6 +719,12 @@ class BenchmarkRunner:
             gsea_cache_dir.mkdir(exist_ok=True, parents=True)
             log.info(f"GSEA analysis enabled - using cache directory: {gsea_cache_dir}")
         
+        knn_jaccard_cache_dir = None
+        if run_knn_graph:
+            knn_jaccard_cache_dir = Path(f"outputs/.knn_jaccard_cache/{dataset_name}")
+            knn_jaccard_cache_dir.mkdir(exist_ok=True, parents=True)
+            log.info(f"KNN graph Jaccard analysis enabled - using cache directory: {knn_jaccard_cache_dir}")
+        
         for model_name, predictions_adata in all_predictions.items():
             if model_name == 'ground_truth':
                 continue  # Skip ground truth in model processing
@@ -742,6 +749,13 @@ class BenchmarkRunner:
                     model_name, predictions_df, ground_truth_df, gsea_cache_dir
                 )
             
+            # Check for cached KNN Jaccard results if enabled
+            cached_knn_jaccard_scores = None
+            if run_knn_graph and knn_jaccard_cache_dir:
+                cached_knn_jaccard_scores = self._load_cached_knn_jaccard_scores(
+                    model_name, predictions_df, ground_truth_df, knn_jaccard_cache_dir
+                )
+            
             # Calculate metrics using new format
             model_metrics = metrics_engine.calculate_all_metrics(
                 predictions_df,
@@ -750,7 +764,8 @@ class BenchmarkRunner:
                 ground_truth_deltas,
                 cached_nir_scores=cached_nir_scores,
                 cached_pds_scores=cached_pds_scores,
-                cached_gsea_scores=cached_gsea_scores
+                cached_gsea_scores=cached_gsea_scores,
+                cached_knn_jaccard_scores=cached_knn_jaccard_scores
             )
             
             # Cache nir scores for future runs if we calculated them
@@ -765,6 +780,13 @@ class BenchmarkRunner:
                 self._save_gsea_scores_to_cache(
                     model_name, predictions_df, ground_truth_df,
                     model_metrics['pathway_recovery_deltapert'], gsea_cache_dir
+                )
+            
+            # Cache KNN Jaccard scores for future runs if we calculated them
+            if run_knn_graph and knn_jaccard_cache_dir and cached_knn_jaccard_scores is None:
+                self._save_knn_jaccard_scores_to_cache(
+                    model_name, predictions_df, ground_truth_df,
+                    model_metrics['knn_jaccard_deltapert'], knn_jaccard_cache_dir
                 )
             
             model_summary = self._calculate_summary_stats(model_metrics)
@@ -1115,6 +1137,56 @@ class BenchmarkRunner:
             log.info(f"  ✓ Saved GSEA scores to cache: {cache_file.name}")
         except Exception as e:
             log.warning(f"  Failed to save GSEA scores to cache: {e}")
+
+    def _load_cached_knn_jaccard_scores(
+        self, model_name: str, predictions_df: pd.DataFrame,
+        ground_truth_df: pd.DataFrame, knn_jaccard_cache_dir: Path
+    ) -> Optional[Dict[str, float]]:
+        """Load cached KNN Jaccard scores if they exist and are valid."""
+        import hashlib
+        
+        pred_keys = sorted(predictions_df.index.tolist())
+        gt_keys = sorted(ground_truth_df.index.tolist())
+        
+        pred_hash = hashlib.md5(json.dumps(pred_keys, sort_keys=True).encode()).hexdigest()[:12]
+        gt_hash = hashlib.md5(json.dumps(gt_keys, sort_keys=True).encode()).hexdigest()[:12]
+        cache_key = f"{model_name}_{pred_hash}_{gt_hash}"
+        cache_file = knn_jaccard_cache_dir / f"{cache_key}_knn_jaccard.json"
+        
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    cached_knn_jaccard_scores = json.load(f)
+                log.info(f"  ✓ Loaded cached KNN Jaccard scores for {model_name} from {cache_file.name}")
+                return cached_knn_jaccard_scores
+            except Exception as e:
+                log.warning(f"  Failed to load cached KNN Jaccard scores: {e}")
+                return None
+        else:
+            log.info(f"  No cached KNN Jaccard scores found for {model_name}, will calculate")
+            return None
+
+    def _save_knn_jaccard_scores_to_cache(
+        self, model_name: str, predictions_df: pd.DataFrame,
+        ground_truth_df: pd.DataFrame, knn_jaccard_scores: Dict[str, float], knn_jaccard_cache_dir: Path
+    ) -> None:
+        """Save KNN Jaccard scores to cache for future runs."""
+        import hashlib
+        
+        pred_keys = sorted(predictions_df.index.tolist())
+        gt_keys = sorted(ground_truth_df.index.tolist())
+        
+        pred_hash = hashlib.md5(json.dumps(pred_keys, sort_keys=True).encode()).hexdigest()[:12]
+        gt_hash = hashlib.md5(json.dumps(gt_keys, sort_keys=True).encode()).hexdigest()[:12]
+        cache_key = f"{model_name}_{pred_hash}_{gt_hash}"
+        cache_file = knn_jaccard_cache_dir / f"{cache_key}_knn_jaccard.json"
+        
+        try:
+            with open(cache_file, 'w') as f:
+                json.dump(knn_jaccard_scores, f, indent=2)
+            log.info(f"  ✓ Saved KNN Jaccard scores to cache: {cache_file.name}")
+        except Exception as e:
+            log.warning(f"  Failed to save KNN Jaccard scores to cache: {e}")
     
     def _save_results(self, results: Dict[str, Any], output_dir: Path):
         """Save benchmark results to files."""

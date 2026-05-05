@@ -21,6 +21,8 @@ from omegaconf import DictConfig, OmegaConf
 
 from .data_manager import DataManager
 from .model_runner import ModelRunner
+from .docker_runner import DockerRunner
+from .apptainer_runner import ApptainerRunner
 from .metrics_engine import MetricsEngine
 from .baseline_runner import BaselineRunner
 from .plotting_engine import PlottingEngine
@@ -53,7 +55,14 @@ class BenchmarkRunner:
         """
         self.config = config
         self.data_manager: Optional[DataManager] = None
-        self.model_runner = ModelRunner()
+
+        runtime = getattr(config.execution, 'container_runtime', 'docker')
+        if runtime == 'apptainer':
+            sif_dir = getattr(config.execution, 'sif_dir', '.')
+            runner = ApptainerRunner(sif_dir=sif_dir)
+        else:
+            runner = DockerRunner()
+        self.model_runner = ModelRunner(runner=runner)
         
     def run_benchmark(self) -> Dict[str, Any]:
         """Execute the complete benchmark pipeline."""

@@ -15,6 +15,7 @@ import logging
 from datetime import datetime
 
 from .docker_runner import DockerRunner
+from .apptainer_runner import ApptainerRunner
 from .data_manager import DataManager
 
 log = logging.getLogger(__name__)
@@ -35,9 +36,14 @@ class ModelRunner:
         >>> predictions = runner.run_model(model_config, data_manager, 'split', output_dir)
     """
     
-    def __init__(self) -> None:
-        """Initialize ModelRunner with Docker support."""
-        self.docker_runner = DockerRunner()
+    def __init__(self, runner=None) -> None:
+        """Initialize ModelRunner.
+
+        Args:
+            runner: A DockerRunner or ApptainerRunner instance. If None,
+                    a DockerRunner is created (original behaviour).
+        """
+        self.docker_runner = runner if runner is not None else DockerRunner()
         self.config: Dict[str, Any] = {}  # Can be set by BenchmarkRunner if needed
     
     def run_model(
@@ -68,7 +74,7 @@ class ModelRunner:
         model_type = model_config.get('type', 'docker')
         
         if model_type == 'docker':
-            if self.docker_runner.docker_client is None:
+            if isinstance(self.docker_runner, DockerRunner) and self.docker_runner.docker_client is None:
                 raise RuntimeError("Docker is not available but model type is 'docker'")
             return self._run_docker_prediction(
                 model_config, data_manager, split_name, output_dir, gpu_id

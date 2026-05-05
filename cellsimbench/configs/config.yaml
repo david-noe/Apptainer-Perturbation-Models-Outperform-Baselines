@@ -8,6 +8,8 @@ defaults:
 execution:
   parallel_folds: true              # Enable parallel fold processing
   max_parallel_folds: null          # Limit (null = use all available GPUs)
+  container_runtime: docker         # "docker" or "apptainer"
+  sif_dir: "."                      # Directory containing .sif files (apptainer only)
 
 experiment:
   name: "${model.name}_${dataset.name}"

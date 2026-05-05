@@ -17,6 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from .data_manager import DataManager
 from .docker_runner import DockerRunner
+from .apptainer_runner import ApptainerRunner
 from .gpu_utils import get_available_gpus, calculate_gpu_assignment, calculate_exclusive_gpu_assignment
 from ..utils.hash_utils import calculate_input_hash, get_model_path_for_config
 
@@ -47,7 +48,13 @@ class TrainingRunner:
         """
         self.config = config
         self.data_manager: Optional[DataManager] = None
-        self.docker_runner = DockerRunner()
+
+        runtime = getattr(config.execution, 'container_runtime', 'docker')
+        if runtime == 'apptainer':
+            sif_dir = getattr(config.execution, 'sif_dir', '.')
+            self.docker_runner = ApptainerRunner(sif_dir=sif_dir)
+        else:
+            self.docker_runner = DockerRunner()
     
     def train_model(self) -> Union[Path, List[Path]]:
         """Train models on folds with optional parallelism.
@@ -132,8 +139,8 @@ class TrainingRunner:
             log.info("No GPUs available - falling back to sequential training")
             return False
         
-        # Check Docker availability
-        if self.docker_runner.docker_client is None:
+        # Check container runtime availability
+        if isinstance(self.docker_runner, DockerRunner) and self.docker_runner.docker_client is None:
             log.info("Docker not available - cannot use parallel training")
             return False
         
@@ -258,12 +265,12 @@ class TrainingRunner:
         # Train the model
         model_type = self.config.model.get('type', 'docker')
         if model_type == 'docker':
-            if self.docker_runner.docker_client is None:
+            if isinstance(self.docker_runner, DockerRunner) and self.docker_runner.docker_client is None:
                 raise RuntimeError("Docker is not available but model type is 'docker'")
             return self._train_docker_model(model_path, split_name, gpu_id)
         else:
             raise ValueError(f"Unknown model type: {model_type}")
-    
+
     def _train_single_model(self, split_name: str) -> Path:
         """Train a single model on a specific split.
         
@@ -300,7 +307,7 @@ class TrainingRunner:
         # Train the model
         model_type = self.config.model.get('type', 'docker')
         if model_type == 'docker':
-            if self.docker_runner.docker_client is None:
+            if isinstance(self.docker_runner, DockerRunner) and self.docker_runner.docker_client is None:
                 raise RuntimeError("Docker is not available but model type is 'docker'")
             return self._train_docker_model(model_path, split_name)
         else:

@@ -19,6 +19,56 @@ for full text and attribution.
 
 ---
 
+## Running on a Cluster (Apptainer)
+
+To run scLambda, scGPT, or GEARS on a cluster without Docker, use the Apptainer backend.
+
+**Prerequisites:**
+- Python ≥3.12
+- Apptainer
+- AWS CLI (for downloading datasets)
+- OpenAI API key in `.env` (required for scLambda only)
+
+```bash
+# 1. Clone and install
+git clone https://github.com/shiftbioscience/Perturbation-Models-Outperform-Baselines
+cd Perturbation-Models-Outperform-Baselines
+python -m venv .venv && source .venv/bin/activate && pip install -e .
+
+# 2. Pull SIF images (run on a login node — internet access is allowed)
+mkdir -p $SCRATCH/cellsimbench/sif
+apptainer pull $SCRATCH/cellsimbench/sif/sclambda.sif docker://millerh1/cellsimbench-sclambda:latest
+apptainer pull $SCRATCH/cellsimbench/sif/scgpt.sif    docker://millerh1/cellsimbench-scgpt:latest
+apptainer pull $SCRATCH/cellsimbench/sif/gears.sif    docker://millerh1/cellsimbench-gears:latest
+
+# 3. Download pre-processed datasets
+./scripts/pull_all_datasets.sh
+
+# 4. For scLambda only — provide your OpenAI key
+echo "OPENAI_API_KEY=sk-..." > .env
+
+# 5. Submit SLURM jobs (train then benchmark for each model/dataset pair)
+export PROJECT_DIR=$PWD
+export SIF_DIR=$SCRATCH/cellsimbench/sif
+sbatch scripts/slurm_train.sh sclambda norman19
+sbatch scripts/slurm_train.sh scgpt   norman19
+sbatch scripts/slurm_train.sh gears   norman19
+```
+
+The SLURM scripts pass `execution.container_runtime=apptainer` and `execution.sif_dir` automatically.
+You can also run interactively by appending those flags to any `cellsimbench` command:
+
+```bash
+cellsimbench train model=sclambda dataset=norman19 \
+    execution.container_runtime=apptainer \
+    execution.sif_dir=$SCRATCH/cellsimbench/sif \
+    execution.parallel_folds=false
+```
+
+**Note on scGPT:** a pretrained model checkpoint must be placed at `data/models/scgpt/` before training (see `cellsimbench/configs/model/scgpt.yaml` → `model_loc_local`).
+
+---
+
 ## Quickstart
 
 Get up and running with pre-built Docker images and pre-processed datasets.

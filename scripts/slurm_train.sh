@@ -40,7 +40,7 @@ DATASET="${2:?Usage: sbatch slurm_train.sh <model> <dataset>}"
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 PROJECT_DIR="${PROJECT_DIR:-$HOME/cellsimbench}"
-SIF_DIR="${SIF_DIR:-$SCRATCH/cellsimbench/sif}"
+SIF_DIR="${SIF_DIR:-$PROJECT_DIR/apptainer_sif}"
 
 # ── Environment ──────────────────────────────────────────────────────────────
 module load stack/2024-06 python/3.12.8

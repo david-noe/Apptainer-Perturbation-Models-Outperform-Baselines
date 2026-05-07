@@ -48,3 +48,7 @@ analyses/plotting/gsea_input_for_R/*
 analyses/plotting/renv/
 analyses/plotting/setup_renv.R
 analyses/plotting/plotting.Rproj
+
+
+# apptainer
+docker_tar

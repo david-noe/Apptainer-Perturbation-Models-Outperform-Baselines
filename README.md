@@ -35,14 +35,12 @@ git clone https://github.com/shiftbioscience/Perturbation-Models-Outperform-Base
 cd Perturbation-Models-Outperform-Baselines
 python -m venv .venv && source .venv/bin/activate && pip install -e .
 
-# 2. Pull SIF images (run on a login node — internet access is allowed)
-mkdir -p $SCRATCH/cellsimbench/sif
-apptainer pull $SCRATCH/cellsimbench/sif/sclambda.sif docker://millerh1/cellsimbench-sclambda:latest
-apptainer pull $SCRATCH/cellsimbench/sif/scgpt.sif    docker://millerh1/cellsimbench-scgpt:latest
-apptainer pull $SCRATCH/cellsimbench/sif/gears.sif    docker://millerh1/cellsimbench-gears:latest
+# 2. Build Docker images
+./scripts/pull_all_models_tar.sh
+
 
 # 3. Download pre-processed datasets
-./scripts/pull_all_datasets.sh
+./scripts/pull_and_save_all_datasets.sh
 
 # 4. For scLambda only — provide your OpenAI key
 echo "OPENAI_API_KEY=sk-..." > .env

@@ -70,7 +70,10 @@ class ApptainerRunner:
 
         # --writable-tmpfs gives the container a writable overlay so models
         # that write to paths inside the image (e.g. /app/data in GEARS) work.
-        cmd.append("--writable-tmpfs")
+        # --no-mount tmp prevents Apptainer from bind-mounting the host /tmp
+        # over the container's /tmp, which would hide editable pip installs
+        # placed there during the Docker build.
+        cmd += ["--writable-tmpfs", "--no-mount", "tmp"]
 
         # GPU passthrough
         env = dict(environment) if environment else {}

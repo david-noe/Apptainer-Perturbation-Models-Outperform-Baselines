@@ -22,13 +22,13 @@ RUN pip install --no-cache-dir \
 # Copy cellsimbench source code from build context root
 RUN pip install --no-cache-dir --force-reinstall git+https://github.com/millerh1/GEARS.git
 
-COPY pyproject.toml /tmp/pyproject.toml
+COPY pyproject.toml /app/pyproject.toml
 
-
-# Install cellsimbench in development mode
-RUN pip install -e /tmp/
-COPY cellsimbench /tmp/cellsimbench
-RUN pip install -e /tmp/
+# Install cellsimbench (non-editable so site-packages holds the code,
+# not a .pth pointer into /tmp which Apptainer overwrites at runtime)
+RUN pip install /app/
+COPY cellsimbench /app/cellsimbench
+RUN pip install /app/
 
 COPY docker/gears/gene2go_all.pkl /app/gene2go_all.pkl
 
